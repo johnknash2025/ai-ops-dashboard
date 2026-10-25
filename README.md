@@ -17,6 +17,10 @@ and draws a hub-and-machines diagram, a 24-hour chart of when scheduled jobs las
 - the scripts those units start, plus `config.json` / `config.yaml` / `settings.json` in their working directory,
   only to pick out port numbers and model names ("which LLM does this job use", a guess). `.env` files are never read.
 - GPU / RAM usage and uptime
+- network addresses and listening TCP ports with the process name, to show who can reach each port
+
+On the hub (macOS) it also reads your LaunchAgents whose file name matches `launchd_match`, to draw `ssh -L` tunnels.
+Two pages come out: `dashboard.html` (jobs and models) and `network.html` (addresses, tunnels, port exposure).
 
 ## Use
 

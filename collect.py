@@ -24,6 +24,7 @@ DISCLOSURE = """Before reading anything on "{name}" ({how}) this tool needs your
   - read the scripts those units start (and config.json / config.yaml / settings.json in their working
     directory) only to pick out port numbers and model names; the file contents are not stored
   - read GPU / RAM usage and uptime
+  - list its network addresses and listening TCP ports with the process name (who can reach each port)
 It changes nothing, sends nothing anywhere, and the result stays in {out} on this computer.
 The consent is remembered in {consent} and asked again whenever the probe script changes."""
 CFG, COLORS, NOTES = {}, {}, {}
