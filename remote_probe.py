@@ -98,7 +98,7 @@ def timers():
         sched = sh(f"systemctl --user show {tmr} -p TimersCalendar,TimersMonotonic --value").replace("\n", " ").strip()
         res.append({"unit": svc, "description": info.get("Description", ""), "next": nxt, "last": last,
                     "result": info.get("Result", ""), "exit": info.get("ExecMainStatus", ""),
-                    "schedule": re.sub(r"\s+", " ", sched)[:120], "llm": guess_llm(info)})
+                    "schedule": re.sub(r"\s+", " ", sched)[:600], "llm": guess_llm(info)})
     return res
 
 
@@ -128,9 +128,59 @@ def gpu():
     return f"AMD GPU VRAM used {int(amd) // 2**20} MiB" if amd.isdigit() else ""
 
 
+def network():
+    """Addresses and who can reach each listening TCP port: only this machine, the tailnet, or every network."""
+    addrs = []
+    for line in sh("ip -4 -br addr 2>/dev/null").splitlines():
+        p = line.split()
+        if len(p) >= 3 and p[0] != "lo" and not p[0].startswith(("docker", "br-", "veth", "virbr")):
+            addrs.append({"iface": p[0], "addr": p[2].split("/")[0]})
+    ports = {}
+    for line in sh("ss -ltnpH 2>/dev/null").splitlines():
+        p = line.split()
+        if len(p) < 4:
+            continue
+        host, _, port = p[3].rpartition(":")
+        host = host.strip("[]").split("%")[0]
+        scope = ("local" if host.startswith("127.") or host == "::1" else
+                 "tailnet" if host.startswith("100.") or host.startswith("fd7a:") else "all")
+        proc = re.search(r'users:\(\("([^"]+)', line)
+        prev = ports.get(port)
+        if not prev or ["local", "tailnet", "all"].index(scope) > ["local", "tailnet", "all"].index(prev["scope"]):
+            ports[port] = {"port": int(port), "scope": scope, "process": proc.group(1) if proc else ""}
+    return {"addrs": addrs, "listen": sorted(ports.values(), key=lambda x: x["port"])}
+
+
+RANK = ["local", "tailnet", "lan", "all"]
+
+
+def network():
+    """Addresses and who can reach each listening TCP port: this machine only, the tailnet, the LAN, or every network."""
+    addrs = []
+    for line in sh("ip -4 -br addr 2>/dev/null").splitlines():
+        p = line.split()
+        if len(p) >= 3 and p[0] != "lo" and not p[0].startswith(("docker", "br-", "veth", "virbr", "mpqemu", "lxd")):
+            addrs.append({"iface": p[0], "addr": p[2].split("/")[0]})
+    ports = {}
+    for line in sh("ss -ltnpH 2>/dev/null").splitlines():
+        p = line.split()
+        if len(p) < 4:
+            continue
+        host, _, port = p[3].rpartition(":")
+        host = host.strip("[]").split("%")[0]
+        scope = ("local" if host.startswith("127.") or host == "::1" else
+                 "tailnet" if host.startswith("100.") or host.startswith("fd7a:") else
+                 "all" if host in ("0.0.0.0", "::", "*") else "lan")
+        proc = re.search(r'users:\(\("([^"]+)', line)
+        prev = ports.get(port)
+        if not prev or RANK.index(scope) > RANK.index(prev["scope"]):
+            ports[port] = {"port": int(port), "scope": scope, "process": proc.group(1) if proc else ""}
+    return {"addrs": addrs, "listen": sorted(ports.values(), key=lambda x: x["port"])}
+
+
 print(json.dumps({
     "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
     "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
-    "llm_servers": llm_servers(), "timers": timers(), "services": services(),
+    "llm_servers": llm_servers(), "net": network(), "net": network(), "timers": timers(), "services": services(),
     "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
 }, ensure_ascii=False))

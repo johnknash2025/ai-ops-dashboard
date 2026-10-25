@@ -4,9 +4,11 @@ import argparse
 import hashlib
 import html
 import os
+import plistlib
 import re
 import sys
 import json
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -25,6 +27,7 @@ DISCLOSURE = """Before reading anything on "{name}" ({how}) this tool needs your
 It changes nothing, sends nothing anywhere, and the result stays in {out} on this computer.
 The consent is remembered in {consent} and asked again whenever the probe script changes."""
 CFG, COLORS, NOTES = {}, {}, {}
+HUB_HOST = socket.gethostname().split(".")[0]
 
 
 def load_config(path):
@@ -75,7 +78,92 @@ def hub():
         for line in subprocess.run(["launchctl", "list"], capture_output=True, text=True).stdout.splitlines()[1:]:
             if re.search(pat, line):
                 agents.append(line.split())
-    return {"agents": agents, "uses": h.get("uses", [])}
+    return {"agents": agents, "uses": h.get("uses", []), "tunnels": tunnels(h.get("launchd_match", []))}
+
+
+def tunnels(match):
+    """ssh -L forwards started by the hub's LaunchAgents: local port -> port on the far machine."""
+    out = []
+    for f in sorted((Path.home() / "Library/LaunchAgents").glob("*.plist")):
+        if not any(m in f.name for m in match):
+            continue
+        try:
+            args = plistlib.loads(f.read_bytes()).get("ProgramArguments", [])
+        except Exception:
+            continue
+        if not args or not args[0].endswith("ssh"):
+            continue
+        for i, a in enumerate(args):
+            if a == "-L" and i + 1 < len(args):
+                parts = args[i + 1].split(":")
+                out.append({"agent": f.stem, "local": parts[-3] if len(parts) >= 3 else "?",
+                            "remote": parts[-1], "target": args[-1]})
+    return out
+
+
+def short(name, n=22):
+    return name if len(name) <= n else name[:n - 1] + "…"
+
+
+def hostname_of(h, data):
+    """Show the machine's own hostname; the config name becomes the nickname."""
+    return data.get(h, {}).get("host") or h
+
+
+def expand(field, top):
+    """One systemd calendar field (hour or minute): *, a,b, a..b, a/step -> sorted values."""
+    vals = set()
+    for part in field.split(","):
+        base, _, step = part.partition("/")
+        step = int(step) if step else 1
+        if base == "*":
+            lo, hi = 0, top - 1
+        elif ".." in base:
+            lo, hi = (int(x) for x in base.split(".."))
+        else:
+            lo = int(base)
+            hi = top - 1 if step > 1 else lo
+        vals.update(range(lo, hi + 1, step))
+    return sorted(vals)
+
+
+def run_times(schedule):
+    """Hours of the day (0-24, fractional) a timer fires, plus a short phrase. Interval timers return (None, phrase)."""
+    times = []
+    for hh, mm in re.findall(r"OnCalendar=\S+ ([\d*,./]+):([\d*,./]+):\S+", schedule):
+        try:
+            times += [h + m / 60 for h in expand(hh, 24) for m in expand(mm, 60)]
+        except ValueError:
+            pass
+    every = re.search(r"OnUnitActiveUSec=(\w+)", schedule)
+    if every and not times:
+        e = every.group(1).replace("min", "分").replace("h", "時間").replace("s", "秒")
+        return None, f"{e}ごと"
+    times = sorted(set(times))
+    if not times:
+        return [], "（不明）"
+    if len(times) == 1:
+        h = times[0]
+        return times, f"毎日 {int(h)}:{round(h % 1 * 60):02d}"
+    if len(times) > 12:
+        return times, f"1日 {len(times)} 回"
+    return times, " · ".join(f"{int(h)}:{round(h % 1 * 60):02d}" for h in times)
+
+
+def strip(schedule, color):
+    """A 24-hour band: a mark at every run time, a shaded band for interval jobs, and a line for now."""
+    times, phrase = run_times(schedule)
+    w, hgt = 168, 16
+    now = time.localtime()
+    nx = 4 + (now.tm_hour + now.tm_min / 60) / 24 * (w - 8)
+    if times is None:
+        marks = f'<rect x="4" y="5" width="{w - 8}" height="6" rx="2" fill="{color}" opacity=".55"/>'
+    else:
+        marks = "".join(f'<rect x="{4 + t / 24 * (w - 8) - 1:.1f}" y="2" width="2.4" height="12" rx="1" fill="{color}"/>' for t in times)
+    grid = "".join(f'<line x1="{4 + k / 24 * (w - 8):.1f}" x2="{4 + k / 24 * (w - 8):.1f}" y1="6" y2="10" stroke="var(--line)"/>' for k in range(0, 25, 6))
+    return (f'<svg width="{w}" height="{hgt}" class=strip><line x1="4" x2="{w - 4}" y1="8" y2="8" stroke="var(--line)"/>{grid}{marks}'
+            f'<line x1="{nx:.1f}" x2="{nx:.1f}" y1="0" y2="16" stroke="var(--bad)" stroke-width="1.2"/></svg>'
+            f'<div class=mute>{esc(phrase)}</div>')
 
 
 def esc(s):
@@ -121,7 +209,7 @@ def overview(data):
         n = len(data[h]["timers"])
         rows.append(f'<path d="M190 {hub_y+20} C260 {hub_y+20},250 {my+20},320 {my+20}" stroke="{c}" fill="none" stroke-width="2"/>'
                     f'<rect x="320" y="{my}" width="170" height="40" rx="8" fill="{c}"/>'
-                    f'<text x="405" y="{my+18}" class="w">{esc(h)}</text><text x="405" y="{my+33}" class="ws">定期 {n} 件</text>')
+                    f'<text x="405" y="{my+18}" class="w">{esc(short(hostname_of(h, data)))}<title>{esc(hostname_of(h, data))}</title></text><text x="405" y="{my+33}" class="ws">{esc(h)} · 定期 {n} 件</text>')
         for s in models:
             label = esc(s["models"][0][:28]) + (f" ほか{len(s['models'])-1}" if len(s["models"]) > 1 else "")
             rows.append(f'<path d="M490 {my+20} C540 {my+20},530 {y+18},570 {y+18}" stroke="{c}" fill="none" stroke-opacity=".5"/>'
@@ -130,14 +218,14 @@ def overview(data):
             y += 46
         y += 8 if len(models) == 1 else 0
     hub = (f'<rect x="20" y="{hub_y}" width="170" height="40" rx="8" fill="{COLORS[CFG["hub"]["name"]]}"/>'
-           f'<text x="105" y="{hub_y+18}" class="w">{esc(CFG["hub"]["name"])}</text><text x="105" y="{hub_y+33}" class="ws">{esc(CFG["hub"].get("subtitle", ""))}</text>')
+           f'<text x="105" y="{hub_y+18}" class="w">{esc(short(HUB_HOST))}</text><text x="105" y="{hub_y+33}" class="ws">{esc(CFG["hub"]["name"])}</text>')
     diagram = f'<svg viewBox="0 0 920 {y+10}" class=diag>{hub}{"".join(rows)}</svg>'
     # 24h chart
     lane = 34
     dots, labels = [], []
     for i, h in enumerate(hosts):
         cy = 30 + i * lane
-        labels.append(f'<text x="80" y="{cy+4}" class="t" text-anchor="end">{esc(h)}</text>'
+        labels.append(f'<text x="80" y="{cy+4}" class="t" text-anchor="end">{esc(short(hostname_of(h, data), 14))}</text>'
                       f'<line x1="90" x2="890" y1="{cy}" y2="{cy}" stroke="var(--line)"/>')
         for t in data[h]["timers"]:
             hr = hour(t)
@@ -152,6 +240,95 @@ def overview(data):
             f'<section><h2>定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>')
 
 
+def page(title, body):
+    nav = " · ".join(f'<a href="{f}">{n}</a>' if n != title else f"<b>{n}</b>" for n, f in (("運用", "dashboard.html"), ("ネットワーク", "network.html")))
+    return f"""<!doctype html><meta charset=utf-8><title>AI 運用ダッシュボード: {title}</title>
+<style>:root{{--bg:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#16171a;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b}}}}
+body{{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Hiragino Sans",sans-serif;max-width:1100px;margin:auto;padding:16px}}
+section{{border:1px solid var(--line);border-radius:10px;padding:4px 16px 12px;margin:14px 0}}
+table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
+.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}.tile{{border:1px solid var(--line);border-radius:10px;padding:10px 14px}}.num{{font-size:28px;font-weight:700}}
+.diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
+a{{color:inherit}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
+<h1>ローカル AI 運用ダッシュボード</h1><p>{nav}</p><p class=mute>更新 {time.strftime('%F %H:%M')} · 「使う LLM」はスクリプトから推定</p>
+{body}"""
+
+
+SCOPE = {"all": ("全ネットワーク", "var(--bad)"), "lan": ("家の LAN", "#d9822b"),
+         "tailnet": ("Tailscale だけ", "var(--ok)"), "local": ("自分だけ", "var(--mute)")}
+
+
+def match_host(target, data):
+    """Which probed machine an ssh target points at (by alias in hosts.json or by address)."""
+    for h in CFG["hosts"]:
+        addrs = data.get(h["name"], {}).get("net", {}).get("addrs", [])
+        if target in h["ssh"] or any(target.split("@")[-1] == a["addr"] for a in addrs):
+            return h["name"]
+    return None
+
+
+def render_network(data, m):
+    hosts = [h for h in data if "error" not in data[h]]
+    x_hub, x_host = 30, 420
+    rows, boxes, y = [], {}, 30
+    for h in hosts:
+        net = data[h].get("net", {})
+        addrs = net.get("addrs", [])
+        hgt = 34 + 16 * max(1, len(addrs))
+        boxes[h] = (y, hgt)
+        lines = "".join(f'<text x="{x_host + 12}" y="{y + 42 + 16 * i}" class="t l">{esc(a["iface"])}  {esc(a["addr"])}</text>'
+                        for i, a in enumerate(addrs))
+        rows.append(f'<rect x="{x_host}" y="{y}" width="240" height="{hgt}" rx="8" fill="none" stroke="{COLORS.get(h)}" stroke-width="2"/>'
+                    f'<rect x="{x_host}" y="{y}" width="240" height="24" rx="8" fill="{COLORS.get(h)}"/>'
+                    f'<text x="{x_host + 120}" y="{y + 16}" class="w">{esc(short(hostname_of(h, data), 30))}</text>{lines}')
+        counts = {}
+        for p in net.get("listen", []):
+            counts[p["scope"]] = counts.get(p["scope"], 0) + 1
+        by = y + 4
+        for k in ("all", "lan", "tailnet", "local"):
+            n = counts.get(k, 0)
+            if n:
+                name, col = SCOPE[k]
+                rows.append(f'<rect x="{x_host + 270}" y="{by}" width="{min(200, n * 8)}" height="12" rx="3" fill="{col}"/>'
+                            f'<text x="{x_host + 280 + min(200, n * 8)}" y="{by + 10}" class="t l" style="font-size:11px">{name} {n}</text>')
+                by += 18
+        y += max(hgt, by - y) + 24
+    total = y
+    hub_y = total / 2 - 30
+    tun_by = {}
+    for t in m["tunnels"]:
+        tun_by.setdefault(match_host(t["target"], data), []).append(t)
+    edges = []
+    for h in hosts:
+        hy, hg = boxes[h]
+        cy = hy + hg / 2
+        tl = tun_by.get(h, [])
+        dash = "" if tl else 'stroke-dasharray="5,4"'
+        edges.append(f'<path d="M{x_hub + 200} {hub_y + 30} C{x_hub + 290} {hub_y + 30},{x_host - 90} {cy},{x_host} {cy}" fill="none" '
+                     f'stroke="{COLORS.get(h)}" stroke-width="{3 if tl else 1.5}" {dash}/>')
+        labels = ["ssh"] + [f"localhost:{t['local']} → :{t['remote']}" for t in tl]
+        for i, lab in enumerate(labels):
+            edges.append(f'<text x="{x_host - 10}" y="{cy - 8 - 13 * (len(labels) - 1 - i)}" class="t" '
+                         f'style="font-size:10px;text-anchor:end">{esc(lab)}</text>')
+    hub = (f'<rect x="{x_hub}" y="{hub_y}" width="200" height="60" rx="10" fill="{COLORS[CFG["hub"]["name"]]}"/>'
+           f'<text x="{x_hub + 100}" y="{hub_y + 26}" class="w">{esc(short(HUB_HOST, 26))}</text>'
+           f'<text x="{x_hub + 100}" y="{hub_y + 44}" class="ws">{esc(CFG["hub"]["name"])}（司令塔）</text>')
+    svg = f'<svg viewBox="0 0 960 {total}" class=diag>{"".join(edges)}{hub}{"".join(rows)}</svg>'
+    tables = []
+    for h in hosts:
+        ls = [p for p in data[h].get("net", {}).get("listen", []) if p["scope"] != "local"]
+        tr = "".join(f'<tr><td>{p["port"]}</td><td>{esc(p["process"]) or "<span class=mute>（名前は管理者権限が必要）</span>"}</td>'
+                     f'<td style="color:{SCOPE[p["scope"]][1]}">{SCOPE[p["scope"]][0]}</td></tr>' for p in ls)
+        tables.append(f'<section style="border-left:6px solid {COLORS.get(h)}"><h2>{esc(hostname_of(h, data))} <span class=mute>{esc(h)}</span></h2>'
+                      f'<p class=mute>ほかの機械から届く待ち受けポート（自分だけのものは省略）</p>'
+                      f'<table><tr><th>ポート</th><th>プロセス</th><th>届く範囲</th></tr>{tr}</table></section>')
+    legend = " ".join(f'<span style="color:{c}">■</span> {n}' for n, c in SCOPE.values())
+    body = (f'<section><h2>つながり方</h2><p class=mute>太線はトンネルあり、点線は ssh だけ。'
+            f'右の棒は待ち受けポートの数（届く範囲ごと）。{legend}</p>{svg}</section>{"".join(tables)}')
+    return page("ネットワーク", body)
+
+
 def render(data, m):
     out = []
     for host, d in data.items():
@@ -163,7 +340,7 @@ def render(data, m):
                        for s in d["llm_servers"]) or "<li class=mute>なし</li>"
         rows = "".join(
             f"<tr><td><b>{esc(t['unit'].removesuffix('.service'))}</b><div class=mute>{esc(note(t['unit']) or t['description'])}</div></td>"
-            f"<td>{esc(t['schedule'])}</td><td>{esc(t['last'])}</td>"
+            f"<td>{strip(t['schedule'], COLORS.get(host))}</td><td>{esc(t['last'])}</td>"
             f"<td class={'ok' if t['result'] == 'success' else 'bad'}>{esc(t['result'])}</td>"
             f"<td>{llm_cell(t['llm'], p2m)}</td></tr>" for t in d["timers"])
         svcs = "".join(
@@ -171,28 +348,18 @@ def render(data, m):
             f"<div class=mute>{esc(note(s['unit']) or s['description'])}</div></td><td>{llm_cell(s['llm'], p2m)}</td></tr>"
             for s in d["services"])
         cron = "".join(f"<li><code>{esc(c[:140])}</code></li>" for c in d["cron"]) or "<li class=mute>なし</li>"
-        out.append(f"""<section style="border-left:6px solid {COLORS.get(host)}"><h2>{esc(host)} <span class=mute>{esc(d['host'])}</span></h2>
+        out.append(f"""<section style="border-left:6px solid {COLORS.get(host)}"><h2>{esc(d['host'])} <span class=mute>{esc(host)}</span></h2>
 <p class=mute>{esc(d['gpu'])} · RAM {esc(d['mem'])} · {esc(d['uptime'])}</p>
 <h3>動いている LLM</h3><ul>{llms}</ul>
-<h3>定期の仕事（タイマー）</h3><table><tr><th>仕事</th><th>いつ</th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table>
+<h3>定期の仕事（タイマー）</h3><table><tr><th>仕事</th><th>いつ <span class=mute>0 · 6 · 12 · 18 · 24時、赤線は今</span></th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table>
 <h3>常駐サービス</h3><table><tr><th>サービス</th><th>使う LLM</th></tr>{svcs}</table>
 <h3>cron</h3><ul>{cron}</ul></section>""")
     uses = "".join(f"<tr><td>{esc(a)}</td><td>{esc(b)}</td></tr>" for a, b in m["uses"])
     agents = "".join(f"<li><code>{esc(a[-1])}</code> {'動作中' if a[0] != '-' else '待機'}"
                      f"{'' if a[1] == '0' else f' <span class=bad>終了コード {esc(a[1])}</span>'}</li>" for a in m["agents"])
-    out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(CFG['hub']['name'])} <span class=mute>{esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
+    out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(HUB_HOST)} <span class=mute>{esc(CFG['hub']['name'])} · {esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
 <h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul></section>""")
-    return f"""<!doctype html><meta charset=utf-8><title>AI 運用ダッシュボード</title>
-<style>:root{{--bg:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b}}
-@media(prefers-color-scheme:dark){{:root{{--bg:#16171a;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b}}}}
-body{{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Hiragino Sans",sans-serif;max-width:1100px;margin:auto;padding:16px}}
-section{{border:1px solid var(--line);border-radius:10px;padding:4px 16px 12px;margin:14px 0}}
-table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
-.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}.tile{{border:1px solid var(--line);border-radius:10px;padding:10px 14px}}.num{{font-size:28px;font-weight:700}}
-.diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
-.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
-<h1>ローカル AI 運用ダッシュボード</h1><p class=mute>更新 {time.strftime('%F %H:%M')} · 「使う LLM」はスクリプトから推定</p>
-{overview(data)}{''.join(out)}"""
+    return page("運用", overview(data) + "".join(out))
 
 
 def main():
@@ -203,7 +370,9 @@ def main():
     load_config(a.config)
     data = {h["name"]: probe(h["name"], h["ssh"], a.yes) for h in CFG["hosts"]}
     (HERE / "last.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
-    (HERE / "dashboard.html").write_text(render(data, hub()))
+    m = hub()
+    (HERE / "dashboard.html").write_text(render(data, m))
+    (HERE / "network.html").write_text(render_network(data, m))
     print("wrote", HERE / "dashboard.html")
 
 
