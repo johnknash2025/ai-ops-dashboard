@@ -1,0 +1,10 @@
+{
+ "hub": {"name": "My laptop", "subtitle": "where I run this", "color": "#6b5bd6",
+         "launchd_match": ["com.example."],
+         "uses": [["Coding agent", "workstation :8080"]]},
+ "hosts": [
+  {"name": "workstation", "ssh": ["user@workstation.local"], "color": "#2f7de1"},
+  {"name": "mini-server", "ssh": ["-i", "~/.ssh/id_ed25519", "user@192.0.2.10"], "color": "#1c9c6b"}
+ ],
+ "notes": {"nightly-review": "Reviews open pull requests every night"}
+}
