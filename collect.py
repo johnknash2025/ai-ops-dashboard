@@ -244,21 +244,22 @@ def overview(data):
                         f'<title>{esc(t["unit"].removesuffix(".service"))} {esc(t["last"])} {esc(t["result"])}</title></circle>')
     ticks = "".join(f'<text x="{90 + k / 24 * 800:.0f}" y="{30 + len(hosts) * lane}" class="t">{k}時</text>' for k in range(0, 25, 3))
     chart = f'<svg viewBox="0 0 920 {40 + len(hosts) * lane}" class=diag>{"".join(labels)}{"".join(dots)}{ticks}</svg>'
+    evs = events_section(data)
     return (f'<div class=tiles>{tiles}</div><section><h2>どれが何を受け持つか</h2>{diagram}</section>'
-            f'<section><h2>定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>')
+            f'<section class=periodic><h2>🕒 定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>{evs}')
 
 
 def page(title, body):
     nav = " · ".join(f'<a href="{f}">{n}</a>' if n != title else f"<b>{n}</b>" for n, f in (("運用", "dashboard.html"), ("ネットワーク", "network.html")))
     return f"""<!doctype html><meta charset=utf-8><title>AI 運用ダッシュボード: {title}</title>
-<style>:root{{--bg:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b}}
-@media(prefers-color-scheme:dark){{:root{{--bg:#16171a;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b}}}}
+<style>:root{{--bg:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b;--per:#2f7de1;--ev:#b26a00;--evbg:#fff8ec}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#16171a;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b;--per:#5598e7;--ev:#f0a630;--evbg:#221c12}}}}
 body{{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Hiragino Sans",sans-serif;max-width:1100px;margin:auto;padding:16px}}
 section{{border:1px solid var(--line);border-radius:10px;padding:4px 16px 12px;margin:14px 0}}
 table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
 .tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}.tile{{border:1px solid var(--line);border-radius:10px;padding:10px 14px}}.num{{font-size:28px;font-weight:700}}
 .diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
-a{{color:inherit}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
+a{{color:inherit}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
 <h1>ローカル AI 運用ダッシュボード</h1><p>{nav}</p><p class=mute>更新 {time.strftime('%F %H:%M')} · 「使う LLM」はスクリプトから推定</p>
 {body}"""
 
@@ -337,6 +338,31 @@ def render_network(data, m):
     return page("ネットワーク", body)
 
 
+def event_units():
+    return {e.get("unit", "").removesuffix(".service") for e in CFG.get("events", [])}
+
+
+def events_section(data):
+    """Jobs that start when something happens outside (webhooks), kept apart from the clock-driven ones."""
+    rules = CFG.get("events", [])
+    if not rules:
+        return ""
+    seen = [dict(e, host=h) for h, d in data.items() for e in (d.get("events") or [])]
+    now = time.strftime("%Y-%m-%d")
+    rows = []
+    for r in rules:
+        hits = [e for e in seen if re.search(r.get("match", "$^"), e["type"]) and (not r.get("source") or e["source"] == r["source"])]
+        today = sum(e["date"] == now for e in hits)
+        last = f'{hits[-1]["date"][5:]} {hits[-1]["time"]}' if hits else "まだなし"
+        rows.append(f'<tr><td><b>{esc(r.get("name", ""))}</b><div class=mute>{esc(r.get("source", ""))}: <code>{esc(r.get("match", ""))}</code></div></td>'
+                    f'<td>{esc(r.get("unit", ""))}<div class=mute>{esc(r.get("host", ""))}</div></td><td>{today}</td><td>{esc(last)}</td></tr>')
+    recent = "".join(f'<li><span class=mute>{esc(e["date"][5:])} {esc(e["time"])}</span> {esc(e["source"])} <code>{esc(e["type"])}</code> {esc(e["repo"])}</li>'
+                     for e in seen[-10:][::-1]) or '<li class=mute>まだイベントはありません</li>'
+    return (f'<section class=event><h2>⚡ イベントで動く仕事 <span class=mute>外で何かが起きたら動く。中身を人が確かめる仕事が多い</span></h2>'
+            f'<table><tr><th>引き金</th><th>動かす仕事</th><th>今日</th><th>最後</th></tr>{"".join(rows)}</table>'
+            f'<h3>最近届いたイベント</h3><ul>{recent}</ul></section>')
+
+
 def render(data, m):
     out = []
     for host, d in data.items():
@@ -347,7 +373,7 @@ def render(data, m):
         llms = "".join(f"<li><b>:{s['port']}</b> {esc(', '.join(s['models']))} <span class=mute>({esc(s['process'])})</span></li>"
                        for s in d["llm_servers"]) or "<li class=mute>なし</li>"
         rows = "".join(
-            f"<tr><td><b>{esc(t['unit'].removesuffix('.service'))}</b><div class=mute>{esc(note(t['unit']) or t['description'])}</div></td>"
+            f"<tr><td><b>{esc(t['unit'].removesuffix('.service'))}</b>{' <span class=evchip>⚡ イベントでも起動</span>' if t['unit'].removesuffix('.service') in event_units() else ''}<div class=mute>{esc(note(t['unit']) or t['description'])}</div></td>"
             f"<td>{strip(t['schedule'], COLORS.get(host))}</td><td>{esc(t['last'])}</td>"
             f"<td class={'ok' if t['result'] == 'success' else 'bad'}>{esc(t['result'])}</td>"
             f"<td>{llm_cell(t['llm'], p2m)}</td></tr>" for t in d["timers"])
@@ -359,14 +385,14 @@ def render(data, m):
         out.append(f"""<section style="border-left:6px solid {COLORS.get(host)}"><h2>{esc(d['host'])} <span class=mute>{esc(host)}</span></h2>
 <p class=mute>{esc(d['gpu'])} · RAM {esc(d['mem'])} · {esc(d['uptime'])}</p>
 <h3>動いている LLM</h3><ul>{llms}</ul>
-<h3>定期の仕事（タイマー）</h3><table><tr><th>仕事</th><th>いつ <span class=mute>0 · 6 · 12 · 18 · 24時、赤線は今</span></th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table>
+<h3>🕒 定期の仕事（タイマー）</h3><table><tr><th>仕事</th><th>いつ <span class=mute>0 · 6 · 12 · 18 · 24時、赤線は今</span></th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table>
 <h3>常駐サービス</h3><table><tr><th>サービス</th><th>使う LLM</th></tr>{svcs}</table>
 <h3>cron</h3><ul>{cron}</ul></section>""")
     uses = "".join(f"<tr><td>{esc(a)}</td><td>{esc(b)}</td></tr>" for a, b in m["uses"])
     agents = "".join(f"<li><code>{esc(a[-1])}</code> {'動作中' if a[0] != '-' else '待機'}"
                      f"{'' if a[1] == '0' else f' <span class=bad>終了コード {esc(a[1])}</span>'}</li>" for a in m["agents"])
     out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(HUB_HOST)} <span class=mute>{esc(CFG['hub']['name'])} · {esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
-<h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul></section>""")
+{f"<h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul>" if agents else ""}</section>""")
     return page("運用", overview(data) + "".join(out))
 
 

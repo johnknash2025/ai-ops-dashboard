@@ -151,6 +151,20 @@ def network():
     return {"addrs": addrs, "listen": sorted(ports.values(), key=lambda x: x["port"])}
 
 
+def inbox_events():
+    """Recent events taken from a webhook inbox (agent-inbox writes ~/agent-inbox/events/<date>.md), newest last."""
+    d = os.path.expanduser("~/agent-inbox/events")
+    if not os.path.isdir(d):
+        return None
+    out = []
+    for f in sorted(os.listdir(d))[-2:]:
+        for line in open(os.path.join(d, f), errors="ignore"):
+            m = re.match(r"- (\d\d:\d\d) (\S+) `([^`]+)` ?(\S*)", line)
+            if m:
+                out.append({"date": f[:10], "time": m.group(1), "source": m.group(2), "type": m.group(3), "repo": m.group(4)})
+    return out[-50:]
+
+
 RANK = ["local", "tailnet", "lan", "all"]
 
 
@@ -181,6 +195,6 @@ def network():
 print(json.dumps({
     "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
     "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
-    "llm_servers": llm_servers(), "net": network(), "net": network(), "timers": timers(), "services": services(),
+    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "net": network(), "events": inbox_events(), "timers": timers(), "services": services(),
     "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
 }, ensure_ascii=False))
