@@ -205,9 +205,10 @@ def overview(data):
     bad = sum(t["result"] != "success" for d in data.values() for t in d.get("timers", []))
     llms = sum(len(d.get("llm_servers", [])) for d in data.values())
     svcs = sum(len(d.get("services", [])) for d in data.values())
-    tiles = "".join(f'<div class=tile><div class=num style="color:{c}">{n}</div>{esc(l)}</div>' for n, l, c in
-                    [(llms, "LLM サーバー", "var(--fg)"), (ok, "定期の仕事 成功", "var(--ok)"),
-                     (bad, "定期の仕事 失敗", "var(--bad)" if bad else "var(--ok)"), (svcs, "常駐サービス", "var(--fg)")])
+    tiles = "".join(f'<a class=tile href="#{v}"><div class=ico>{i}</div><div class=num style="color:{c}">{n}</div>{esc(l)}</a>' for i, n, l, c, v in
+                    [("🧠", llms, "LLM サーバー", "var(--fg)", "machines"), ("✅", ok, "定期 成功", "var(--ok)", "jobs"),
+                     ("❌" if bad else "✅", bad, "定期 失敗", "var(--bad)" if bad else "var(--ok)", "jobs"),
+                     ("⚙️", svcs, "常駐サービス", "var(--fg)", "machines")])
     # diagram: hub on the left, machines in the middle, their models on the right
     hosts = [h for h in data if "error" not in data[h]]
     rows, y = [], 20
@@ -246,23 +247,50 @@ def overview(data):
     ticks = "".join(f'<text x="{90 + k / 24 * 800:.0f}" y="{30 + len(hosts) * lane}" class="t">{k}時</text>' for k in range(0, 25, 3))
     chart = f'<svg viewBox="0 0 920 {40 + len(hosts) * lane}" class=diag>{"".join(labels)}{"".join(dots)}{ticks}</svg>'
     evs = events_section(data)
-    return (f'<div class=tiles>{tiles}</div><section><h2>どれが何を受け持つか</h2>{diagram}</section>'
-            f'<section class=periodic><h2>🕒 定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>{evs}')
+    home = f'<div class=tiles>{tiles}</div><section><h2>どれが何を受け持つか</h2>{diagram}</section>'
+    jobs = f'<section class=periodic><h2>🕒 定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>'
+    return home, jobs, evs
 
 
-def page(title, body):
-    nav = " · ".join(f'<a href="{f}">{n}</a>' if n != title else f"<b>{n}</b>" for n, f in (("運用", "dashboard.html"), ("ネットワーク", "network.html")))
-    return f"""<!doctype html><meta charset=utf-8><title>AI 運用ダッシュボード: {title}</title>
-<style>:root{{--bg:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b;--per:#2f7de1;--ev:#b26a00;--evbg:#fff8ec}}
-@media(prefers-color-scheme:dark){{:root{{--bg:#16171a;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b;--per:#5598e7;--ev:#f0a630;--evbg:#221c12}}}}
-body{{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Hiragino Sans",sans-serif;max-width:1100px;margin:auto;padding:16px}}
-section{{border:1px solid var(--line);border-radius:10px;padding:4px 16px 12px;margin:14px 0}}
+VIEWS = [("home", "🏠", "概要"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
+         ("machines", "🖥", "マシン"), ("net", "🌐", "ネット")]
+
+
+def page(title, body, views=None):
+    """views: {view_id: html}. One view is shown at a time; the left rail (bottom bar on phones) switches them."""
+    if views:
+        rail = "".join(f'<a href="#{v}" data-v="{v}"><span>{i}</span><small>{n}</small></a>' for v, i, n in VIEWS if v in views)
+        body = "".join(f'<div class=view id="v-{v}">{views[v]}</div>' for v, _, _ in VIEWS if v in views)
+    else:
+        rail = '<a href="dashboard.html"><span>🏠</span><small>戻る</small></a>'
+    return f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>AI 運用ダッシュボード: {title}</title>
+<style>:root{{--bg:#f6f7f9;--card:#fff;--fg:#1b1b1b;--mute:#777;--line:#e4e4e4;--ok:#17803d;--bad:#c0392b;--per:#2f7de1;--ev:#b26a00;--evbg:#fff8ec;--rail:#1f2430}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#111215;--card:#1a1b1f;--fg:#e8e8e8;--mute:#999;--line:#30323a;--ok:#4cc27a;--bad:#ff7a6b;--per:#5598e7;--ev:#f0a630;--evbg:#221c12;--rail:#0b0c0f}}}}
+body{{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Hiragino Sans",sans-serif;margin:0}}
+nav.rail{{position:fixed;left:0;top:0;bottom:0;width:76px;background:var(--rail);display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:6px}}
+nav.rail a{{color:#cfd3dc;text-decoration:none;display:flex;flex-direction:column;align-items:center;width:64px;padding:8px 0;border-radius:12px}}
+nav.rail a span{{font-size:24px;line-height:1}}nav.rail a small{{font-size:11px;margin-top:4px}}nav.rail a.on{{background:#ffffff1f;color:#fff}}
+main{{margin-left:76px;padding:16px 22px;max-width:1150px}}
+@media(max-width:700px){{nav.rail{{top:auto;width:100%;height:64px;flex-direction:row;justify-content:space-around;padding:0}}main{{margin:0;padding:12px 12px 80px}}}}
+header{{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}header h1{{font-size:20px;margin:4px 0}}
+section{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px 16px 12px;margin:14px 0}}
 table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
-.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}.tile{{border:1px solid var(--line);border-radius:10px;padding:10px 14px}}.num{{font-size:28px;font-weight:700}}
+.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:10px}}
+.tile{{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;text-decoration:none;color:inherit}}.tile:hover{{border-color:var(--per)}}
+.ico{{font-size:22px}}.num{{font-size:30px;font-weight:700;line-height:1.2}}
 .diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
-a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg)}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
-<h1>ローカル AI 運用ダッシュボード</h1><p>{nav}</p><p class=mute>更新 {time.strftime('%F %H:%M')} · 「使う LLM」はスクリプトから推定</p>
-{body}"""
+details.host>summary{{cursor:pointer;list-style:none;font-size:16px;font-weight:600;padding:10px 0}}details.host>summary::-webkit-details-marker{{display:none}}
+.alert{{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:10px;background:var(--evbg);margin:6px 0}}
+a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg);border-radius:8px}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}
+.view{{display:none}}.view.on{{display:block}}</style>
+<nav class=rail>{rail}</nav><main><header><h1>ローカル AI 運用</h1><span class=mute>更新 {time.strftime('%m/%d %H:%M')} · 10 分ごと</span></header>
+{body}</main>
+<script>
+function show(){{var v=(location.hash||'#home').slice(1),f=document.getElementById('v-'+v);if(!f){{v='home';f=document.getElementById('v-home')}}
+if(!f)return;document.querySelectorAll('.view').forEach(function(e){{e.classList.toggle('on',e===f)}});
+document.querySelectorAll('nav.rail a').forEach(function(a){{a.classList.toggle('on',a.dataset.v===v)}});scrollTo(0,0)}}
+addEventListener('hashchange',show);show();
+</script>"""
 
 
 SCOPE = {"all": ("全ネットワーク", "var(--bad)"), "lan": ("家の LAN", "#d9822b"),
@@ -336,7 +364,7 @@ def render_network(data, m):
     legend = " ".join(f'<span style="color:{c}">■</span> {n}' for n, c in SCOPE.values())
     body = (f'<section><h2>つながり方</h2><p class=mute>太線はトンネルあり、点線は ssh だけ。'
             f'右の棒は待ち受けポートの数（届く範囲ごと）。{legend}</p>{svg}</section>{"".join(tables)}')
-    return page("ネットワーク", body)
+    return body
 
 
 def event_units():
@@ -384,6 +412,22 @@ def reports_section(data):
             f'{f" · 高 {high} 件" if high else ""}</span></h2>{"".join(items)}</section>')
 
 
+def out_timers(data):
+    """Every clock-driven job on one table, machine shown by its color, failures first."""
+    rows = []
+    for h, d in data.items():
+        for t in d.get("timers", []):
+            name = t["unit"].removesuffix(".service")
+            ev = ' <span class=evchip>⚡</span>' if name in event_units() else ""
+            rows.append((t["result"] == "success", h, f'<tr><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
+                         f'<td><b>{esc(name)}</b>{ev}<div class=mute>{esc(note(t["unit"]) or t["description"])}</div></td>'
+                         f'<td>{strip(t["schedule"], COLORS.get(h))}</td>'
+                         f'<td class={"ok" if t["result"] == "success" else "bad"}>{"✅" if t["result"] == "success" else "❌ " + esc(t["result"])}</td></tr>'))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    yield ('<section class=periodic><h2>🕒 すべての定期の仕事 <span class=mute>失敗が上・帯は24時間、赤線は今</span></h2>'
+           '<table><tr><th>マシン</th><th>仕事</th><th>いつ</th><th>結果</th></tr>' + "".join(r[2] for r in rows) + '</table></section>')
+
+
 def render(data, m):
     out = []
     for host, d in data.items():
@@ -414,7 +458,17 @@ def render(data, m):
                      f"{'' if a[1] == '0' else f' <span class=bad>終了コード {esc(a[1])}</span>'}</li>" for a in m["agents"])
     out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(HUB_HOST)} <span class=mute>{esc(CFG['hub']['name'])} · {esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
 {f"<h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul>" if agents else ""}</section>""")
-    return page("運用", overview(data) + reports_section(data) + "".join(out))
+    home, jobs, evs = overview(data)
+    alerts = [f'<div class=alert>❌ <b>{esc(hostname_of(h, data))}</b> {esc(t["unit"].removesuffix(".service"))} <span class=mute>{esc(t["last"])}</span></div>'
+              for h, d in data.items() for t in d.get("timers", []) if t["result"] != "success"]
+    alerts += [f'<div class=alert>🚨 <b>{esc(r["title"])}</b> <span class=mute>{esc(r["time"][:16])}</span></div>'
+               for d in data.values() for r in (d.get("reports") or []) if r["level"] == "high"][-3:]
+    attention = f'<section><h2>👀 気にしてほしいこと</h2>{"".join(alerts)}</section>' if alerts else ""
+    hosts = "".join(f'<details class=host><summary>{s_[s_.index("<h2>") + 4:s_.index("</h2>")]}</summary>{s_}</details>' for s_ in out)
+    views = {"home": home + attention, "jobs": jobs + "".join(out_timers(data)), "events": evs or "<section><p class=mute>イベントの規則がありません</p></section>",
+             "reports": reports_section(data) or "<section><p class=mute>まだ報告はありません</p></section>",
+             "machines": hosts, "net": render_network(data, m)}
+    return page("運用", "", views)
 
 
 def collect(config, yes):
@@ -423,7 +477,7 @@ def collect(config, yes):
     (HERE / "last.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
     m = hub()
     (HERE / "dashboard.html").write_text(render(data, m))
-    (HERE / "network.html").write_text(render_network(data, m))
+    (HERE / "network.html").write_text(page("ネットワーク", render_network(data, m)))
     return data
 
 
