@@ -24,6 +24,7 @@ DISCLOSURE = """Before reading anything on "{name}" ({how}) this tool needs your
   - read the scripts those units start (and config.json / config.yaml / settings.json in their working
     directory) only to pick out port numbers and model names; the file contents are not stored
   - read GPU / RAM usage and uptime
+  - read the newest agent reports in ~/.ai-ops/reports and webhook events in ~/agent-inbox/events (if present)
   - list its network addresses and listening TCP ports with the process name (who can reach each port)
 It changes nothing, sends nothing anywhere, and the result stays in {out} on this computer.
 The consent is remembered in {consent} and asked again whenever the probe script changes."""
@@ -259,7 +260,7 @@ section{{border:1px solid var(--line);border-radius:10px;padding:4px 16px 12px;m
 table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
 .tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}.tile{{border:1px solid var(--line);border-radius:10px;padding:10px 14px}}.num{{font-size:28px;font-weight:700}}
 .diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
-a{{color:inherit}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
+a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg)}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}</style>
 <h1>ローカル AI 運用ダッシュボード</h1><p>{nav}</p><p class=mute>更新 {time.strftime('%F %H:%M')} · 「使う LLM」はスクリプトから推定</p>
 {body}"""
 
@@ -363,6 +364,26 @@ def events_section(data):
             f'<h3>最近届いたイベント</h3><ul>{recent}</ul></section>')
 
 
+LEVEL = {"high": ("高", "var(--bad)"), "medium": ("中", "var(--ev)"), "low": ("低", "var(--per)"),
+         "info": ("情報", "var(--mute)"), "test": ("テスト", "var(--mute)")}
+
+
+def reports_section(data):
+    rs = sorted((dict(r, host=h) for h, d in data.items() for r in (d.get("reports") or [])), key=lambda r: r["time"], reverse=True)
+    if not rs:
+        return ""
+    items = []
+    for r in rs[:15]:
+        name, col = LEVEL.get(r["level"], ("?", "var(--mute)"))
+        items.append(f'<div class=rep style="border-left:4px solid {col}"><div><b style="color:{col}">{name}</b> '
+                     f'<span class=mute>{esc(r["time"][:16])} · {esc(r["source"])} · {esc(hostname_of(r["host"], data))}</span></div>'
+                     f'<div><b>{esc(r["title"])}</b></div><div class=mute style="white-space:pre-wrap">{esc(r["summary"])}</div>'
+                     + (f'<div class=mute>{esc(r["link"])}</div>' if r.get("link") else "") + "</div>")
+    high = sum(r["level"] == "high" for r in rs[:15])
+    return (f'<section class=reports><h2>🛡 エージェントの報告 <span class=mute>新しい順・色は危険度'
+            f'{f" · 高 {high} 件" if high else ""}</span></h2>{"".join(items)}</section>')
+
+
 def render(data, m):
     out = []
     for host, d in data.items():
@@ -393,7 +414,7 @@ def render(data, m):
                      f"{'' if a[1] == '0' else f' <span class=bad>終了コード {esc(a[1])}</span>'}</li>" for a in m["agents"])
     out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(HUB_HOST)} <span class=mute>{esc(CFG['hub']['name'])} · {esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
 {f"<h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul>" if agents else ""}</section>""")
-    return page("運用", overview(data) + "".join(out))
+    return page("運用", overview(data) + reports_section(data) + "".join(out))
 
 
 def collect(config, yes):

@@ -165,6 +165,22 @@ def inbox_events():
     return out[-50:]
 
 
+def reports():
+    """Agent reports: ~/.ai-ops/reports/*.json, each {"time", "source", "level", "title", "summary", "link"}.
+    Any agent can drop one there; only the newest 30 are read, and only these fields."""
+    d = os.path.expanduser("~/.ai-ops/reports")
+    if not os.path.isdir(d):
+        return None
+    out = []
+    for f in sorted(os.listdir(d))[-30:]:
+        try:
+            r = json.load(open(os.path.join(d, f)))
+            out.append({k: str(r.get(k, ""))[:600] for k in ("time", "source", "level", "title", "summary", "link")})
+        except Exception:
+            pass
+    return out
+
+
 RANK = ["local", "tailnet", "lan", "all"]
 
 
@@ -195,6 +211,6 @@ def network():
 print(json.dumps({
     "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
     "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
-    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "net": network(), "events": inbox_events(), "timers": timers(), "services": services(),
+    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "reports": reports(), "net": network(), "events": inbox_events(), "reports": reports(), "timers": timers(), "services": services(),
     "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
 }, ensure_ascii=False))

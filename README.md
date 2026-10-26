@@ -17,6 +17,7 @@ and draws a hub-and-machines diagram, a 24-hour chart of when scheduled jobs las
 - the scripts those units start, plus `config.json` / `config.yaml` / `settings.json` in their working directory,
   only to pick out port numbers and model names ("which LLM does this job use", a guess). `.env` files are never read.
 - GPU / RAM usage and uptime
+- the newest agent reports in `~/.ai-ops/reports/` and webhook events in `~/agent-inbox/events/`, if those folders exist
 - network addresses and listening TCP ports with the process name, to show who can reach each port
 
 On the hub (macOS) it also reads your LaunchAgents whose file name matches `launchd_match`, to draw `ssh -L` tunnels.
@@ -31,6 +32,15 @@ Two pages come out: `dashboard.html` (jobs and models) and `network.html` (addre
 `--yes` accepts for every host without asking (for scripts, after you have read the list above).
 `hosts.json` also takes short notes per job (`"notes": {"unit-name": "what it is for"}`) and what the hub itself uses.
 Your config, consent record, `last.json` and `dashboard.html` stay out of git.
+
+## Agent reports
+
+Any agent can show its findings on the dashboard by writing a small JSON file to `~/.ai-ops/reports/` on its machine:
+
+    {"time": "2026-10-26T06:49:00", "source": "security agent", "level": "high|medium|low|info|test",
+     "title": "one line", "summary": "a few lines", "link": "where the full report is"}
+
+The probe reads only the newest 30 files and only these fields; the page lists them newest first, colored by level.
 
 ## Always-on (e.g. a DGX Spark class box or a home server)
 
