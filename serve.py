@@ -15,7 +15,8 @@ import traceback
 
 import collect
 
-PAGES = {"/": "dashboard.html", "/dashboard.html": "dashboard.html", "/network.html": "network.html"}
+PAGES = {"/": "dashboard.html", "/dashboard.html": "dashboard.html", "/network.html": "network.html",
+         "/inventory.json": "last.json"}   # the same data as the page, for other agents on the tailnet
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -27,7 +28,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         body = f.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", "application/json" if name.endswith(".json") else "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")

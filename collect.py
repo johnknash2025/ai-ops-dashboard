@@ -12,6 +12,7 @@ import socket
 import subprocess
 import time
 
+import assets
 import org
 from pathlib import Path
 
@@ -273,7 +274,7 @@ def overview(data):
 
 
 VIEWS = [("home", "🏠", "概要"), ("org", "🏢", "組織"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
-         ("machines", "🖥", "マシン"), ("net", "🌐", "ネット")]
+         ("machines", "🖥", "マシン"), ("assets", "🧰", "資産"), ("roadmap", "🗺", "予定"), ("net", "🌐", "ネット")]
 
 
 def page(title, body, views=None):
@@ -497,6 +498,7 @@ def render(data, m):
     views = {"home": home + attention, "jobs": jobs + "".join(out_timers(data)), "events": evs or "<section><p class=mute>イベントの規則がありません</p></section>",
              "reports": reports_section(data) or "<section><p class=mute>まだ報告はありません</p></section>",
              "machines": hosts, "net": render_network(data, m),
+             "assets": assets.render_assets(data, hostname_of, COLORS), "roadmap": assets.render_roadmap(data),
              "org": org.render(CFG.get("agents", []), data, {k: v[1] for k, v in LEVEL.items()})}
     return page("運用", "", views)
 

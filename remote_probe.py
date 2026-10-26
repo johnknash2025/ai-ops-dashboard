@@ -181,6 +181,55 @@ def reports():
     return out
 
 
+def inventory():
+    """Hardware, OS, storage, versions of common tools, and git checkouts in the home folder (remote, tag, last commit)."""
+    os_rel = dict(l.split("=", 1) for l in sh("cat /etc/os-release").splitlines() if "=" in l)
+    cpu = re.search(r"Model name:\s*(.+)", sh("lscpu"))
+    disks = []
+    for line in sh("df -B1 -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs --output=source,fstype,size,used,target 2>/dev/null").splitlines()[1:]:
+        p = line.split()
+        if len(p) >= 5 and int(p[2]) > 20 * 2**30 and not (p[1] == "zfs" and int(p[3]) < 10 * 2**30):
+            disks.append({"dev": p[0], "fs": p[1], "size_gb": int(p[2]) // 2**30, "used_gb": int(p[3]) // 2**30, "mount": p[4]})
+    pools = [l.split("\t") for l in sh("zpool list -H -o name,size,alloc,health 2>/dev/null").splitlines() if l]
+    tools = {}
+    for name, cmd in [("tailscale", "tailscale version | head -1"), ("docker", "docker --version"), ("python3", "python3 --version"),
+                      ("nvidia_driver", "nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1"),
+                      ("cuda", "nvcc --version | grep -o 'release [0-9.]*'"), ("ollama", "ollama --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1"),
+                      ("node", "node -v"), ("git", "git --version"), ("openssh", "ssh -V 2>&1")]:
+        v = sh(cmd).strip()
+        if v:
+            tools[name] = v.split("\n")[0][:60]
+    repos = []
+    for d in sorted(os.listdir(os.path.expanduser("~"))):
+        g = os.path.expanduser(f"~/{d}")
+        if os.path.isdir(os.path.join(g, ".git")):
+            url = sh(f"git -C '{g}' remote get-url origin 2>/dev/null").strip()
+            url = re.sub(r"https://[^@/]+@", "https://", url)            # never keep credentials embedded in a URL
+            repos.append({"dir": d, "remote": url, "tag": sh(f"git -C '{g}' describe --tags --always 2>/dev/null").strip()[:40],
+                          "last_commit": sh(f"git -C '{g}' log -1 --format=%cs 2>/dev/null").strip()})
+    return {"os": os_rel.get("PRETTY_NAME", "").strip('"'), "kernel": sh("uname -r").strip(), "arch": sh("uname -m").strip(),
+            "cpu": cpu.group(1).strip() if cpu else "", "cores": os.cpu_count(),
+            "ram_gb": round(int(sh("awk '/MemTotal/{print $2}' /proc/meminfo") or 0) / 2**20),
+            "disks": disks, "zpools": [{"name": p[0], "size": p[1], "alloc": p[2], "health": p[3]} for p in pools if len(p) >= 4],
+            "tools": tools, "repos": repos[:40]}
+
+
+def agent_data():
+    """Structured data other agents publish for the dashboard: ~/.ai-ops/data/<name>.json (only the newest 10, max 200 KB each)."""
+    d = os.path.expanduser("~/.ai-ops/data")
+    if not os.path.isdir(d):
+        return None
+    out = {}
+    for f in sorted(os.listdir(d))[:10]:
+        p = os.path.join(d, f)
+        if f.endswith(".json") and os.path.getsize(p) < 200_000:
+            try:
+                out[f[:-5]] = json.load(open(p))
+            except Exception:
+                pass
+    return out
+
+
 RANK = ["local", "tailnet", "lan", "all"]
 
 
@@ -211,6 +260,6 @@ def network():
 print(json.dumps({
     "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
     "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
-    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "reports": reports(), "net": network(), "events": inbox_events(), "reports": reports(), "timers": timers(), "services": services(),
+    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "reports": reports(), "inventory": inventory(), "data": agent_data(), "net": network(), "events": inbox_events(), "reports": reports(), "inventory": inventory(), "data": agent_data(), "timers": timers(), "services": services(),
     "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
 }, ensure_ascii=False))
