@@ -11,6 +11,8 @@ import json
 import socket
 import subprocess
 import time
+
+import org
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -270,7 +272,7 @@ def overview(data):
     return home, jobs, evs
 
 
-VIEWS = [("home", "🏠", "概要"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
+VIEWS = [("home", "🏠", "概要"), ("org", "🏢", "組織"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
          ("machines", "🖥", "マシン"), ("net", "🌐", "ネット")]
 
 
@@ -494,7 +496,8 @@ def render(data, m):
     hosts = "".join(f'<details class=host><summary>{s_[s_.index("<h2>") + 4:s_.index("</h2>")]}</summary>{s_}</details>' for s_ in out)
     views = {"home": home + attention, "jobs": jobs + "".join(out_timers(data)), "events": evs or "<section><p class=mute>イベントの規則がありません</p></section>",
              "reports": reports_section(data) or "<section><p class=mute>まだ報告はありません</p></section>",
-             "machines": hosts, "net": render_network(data, m)}
+             "machines": hosts, "net": render_network(data, m),
+             "org": org.render(CFG.get("agents", []), data, {k: v[1] for k, v in LEVEL.items()})}
     return page("運用", "", views)
 
 

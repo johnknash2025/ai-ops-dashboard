@@ -33,6 +33,19 @@ Two pages come out: `dashboard.html` (jobs and models) and `network.html` (addre
 `hosts.json` also takes short notes per job (`"notes": {"unit-name": "what it is for"}`) and what the hub itself uses.
 Your config, consent record, `last.json` and `dashboard.html` stay out of git.
 
+## Organisation
+
+List your agents under `"agents"` in `hosts.json` and the 🏢 view draws them in four layers — owners (one per area of
+responsibility), builders (make changes on request, checked by someone else), guardians (read-only watchers) and base
+parts (queues, inboxes, model endpoints) — with each agent's jobs marked green / red from what the probe found.
+
+    {"name": "reviewer", "layer": "owner|builder|guardian|base", "scope": "what it answers for",
+     "can": ["read", "draft", "pr", "comment"], "model": "which LLM", "local_only": true, "confidential": false,
+     "jobs": ["unit or cron script names"], "reviews": "the builder it checks"}
+
+It also runs a health check of the structure: jobs nobody owns, a builder checked by itself or by the same model,
+guardians that can write, agents reading confidential data that are not local-only, failing jobs per agent.
+
 ## Agent reports
 
 Any agent can show its findings on the dashboard by writing a small JSON file to `~/.ai-ops/reports/` on its machine:
