@@ -127,6 +127,13 @@ echo "@@df"; df -kP | awk '/CACHEDEV[0-9]_DATA$/{print $2, $3, $6}'
 echo "@@raid"; awk '/^md[0-9]+ :/{n=$1; l=$4} /blocks/ && n{print n, l, $NF; n=""}' /proc/mdstat
 echo "@@listen"; netstat -tln 2>/dev/null | awk 'NR>2{print $4}'
 echo "@@containers"; $D ps --format '{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}' 2>/dev/null
+echo "@@trouble"
+for c in $($D ps -a --format '{{.Names}}|{{.Status}}' 2>/dev/null | grep -E 'unhealthy|Restarting|Exited \([1-9]' | cut -d'|' -f1); do
+  echo "=== $c"
+  $D inspect "$c" --format 'status={{.State.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}} error={{.State.Error}}' 2>/dev/null
+  $D inspect "$c" --format '{{if .State.Health}}{{range .State.Health.Log}}health: {{.ExitCode}} {{.Output}}{{end}}{{end}}' 2>/dev/null | tail -c 1500
+  $D logs --tail 40 "$c" 2>&1 | tail -c 4000
+done
 echo "@@qpkg"; for s in $(awk -F'[][]' '/^\[/{print $2}' /etc/config/qpkg.conf); do echo "$s|$(g "$s" Version -f /etc/config/qpkg.conf)|$(g "$s" Enable -f /etc/config/qpkg.conf)"; done
 echo "@@sec"
 echo "upnp_router=$(g UPnP_Global Enable -f /etc/config/upnpc.conf)"
@@ -177,6 +184,14 @@ def nas_snapshot(alias):
             if "=" in kv:
                 k, v = kv.split("=", 1)
                 s[k] = v
+    trouble, cur_c = {}, None
+    for l in sec.get("trouble", []):
+        if l.startswith("=== "):
+            cur_c = l[4:].strip()
+            trouble[cur_c] = []
+        elif cur_c:
+            # mask anything that looks like a credential before it leaves the Mac
+            trouble[cur_c].append(re.sub(r"(?i)(password|passwd|secret|token|key)([=: ]+)\S+", r"\1\2***", l)[:300])
     mi = {"image": "", "buckets": []}
     for l in sec.get("minio", []):
         if l.startswith("image="):
@@ -194,7 +209,8 @@ def nas_snapshot(alias):
                           "ram_gb": int(mem[0] or 0), "disks": disks, "zpools": [],
                           "raid": sec.get("raid", []), "tools": {"docker_containers": f"{len(containers)} 個"},
                           "apps": [dict(zip(["name", "version", "enabled"], l.split("|"))) for l in sec.get("qpkg", []) if "|" in l],
-                          "containers": containers, "repos": [], "security": s},
+                          "containers": containers, "repos": [], "security": s,
+                          "trouble": {k: "\n".join(v)[-5000:] for k, v in trouble.items()}},
             "data": {"minio": mi}}
 
 
