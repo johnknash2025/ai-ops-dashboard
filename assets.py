@@ -43,7 +43,41 @@ def render_assets(data, hostname_of, colors):
         if r:
             repos += (f'<details><summary><span style="color:{colors.get(h)}">●</span> {esc(hostname_of(h, data))}（{len(inv[h]["repos"])}）</summary>'
                       f'<table><tr><th>フォルダ</th><th>元</th><th>版</th><th>最終コミット</th></tr>{r}</table></details>')
-    return (f'<section><h2>🖥 機械とソフトの版</h2><div style="overflow-x:auto"><table><tr><th></th>{head}</tr>{body}</table></div></section>'
+    nas = ""
+    for h in hosts:
+        sec = inv[h].get("security")
+        if not sec:
+            continue
+        good = {"firewall": "on", "filevault": "on", "upnp_router": "FALSE", "myqnapcloud_publish": "0", "telnet": "FALSE",
+                "ftp": "False", "snmp": "FALSE", "login_failures_recent": "0", "malware_events_recent": "0", "admin_disabled": "1"}
+        cells = "".join(f'<span class=chip style="border:1px solid {"var(--ok)" if good.get(k) == v else ("var(--bad)" if k in good else "var(--line)")};'
+                        f'border-radius:999px;padding:1px 9px;margin:2px;display:inline-block;font-size:12px">{esc(k)} = {esc(v)}</span>'
+                        for k, v in sec.items())
+        extra = ""
+        if inv[h].get("raid"):
+            extra += "<div class=mute>RAID: " + esc(" · ".join(r for r in inv[h]["raid"] if not r.startswith(("md9 ", "md13 ")))) + "</div>"
+        if inv[h].get("containers"):
+            extra += "<div class=mute>コンテナ: " + esc(" · ".join(f'{c["name"]} ({c["image"]})' for c in inv[h]["containers"])) + "</div>"
+        if inv[h].get("apps"):
+            extra += f'<details><summary class=mute>アプリ {len(inv[h]["apps"])} 個</summary><div class=mute>' + esc(
+                " · ".join(f'{a["name"]} {a["version"]}{"" if a["enabled"] == "TRUE" else "（停止）"}' for a in inv[h]["apps"])) + "</div></details>"
+        nas += f'<h3><span style="color:{colors.get(h)}">●</span> {esc(hostname_of(h, data))}</h3><div>{cells}</div>{extra}'
+    minio = ""
+    for h in data:
+        mi = (data[h].get("data") or {}).get("minio")
+        if not mi:
+            continue
+        total = sum(b["size_gb"] for b in mi["buckets"]) or 1
+        rows = "".join(f'<tr><td><b>{esc(b["name"])}</b>{" 🔐" if "secret" in b["name"] else ""}</td>'
+                       f'<td><div style="background:var(--line);border-radius:4px;height:8px;width:180px;display:inline-block">'
+                       f'<div style="width:{max(1, b["size_gb"] / total * 100):.0f}%;background:var(--per);height:8px;border-radius:4px"></div></div> '
+                       f'<span class=mute>{b["size_gb"]:,} GB</span></td><td class=mute>{esc(", ".join(b["prefixes"]))}</td></tr>'
+                       for b in sorted(mi["buckets"], key=lambda b: -b["size_gb"]))
+        minio += (f'<section><h2>🪣 データ（MinIO） <span class=mute>{esc(hostname_of(h, data))} · {esc(mi["image"])} · '
+                  f'バケット {len(mi["buckets"])} 個 · 合計 {total:,.0f} GB</span></h2><table><tr><th>バケット</th><th>大きさ</th><th>中の最上位</th></tr>{rows}</table></section>')
+    stale = "".join(f'<div class=alert>⏳ {esc(hostname_of(h, data))}: {esc(data[h]["stale"])}</div>' for h in data if data[h].get("stale"))
+    return (stale + (f'<section><h2>🛡 セキュリティの設定 <span class=mute>緑=望ましい 赤=見直し</span></h2>{nas}</section>' if nas else "") + minio +
+            f'<section><h2>🖥 機械とソフトの版</h2><div style="overflow-x:auto"><table><tr><th></th>{head}</tr>{body}</table></div></section>'
             f'<section><h2>💾 ストレージ <span class=mute>80% で黄、90% で赤</span></h2>{storage}</section>'
             f'<section><h2>📦 手元のリポジトリ <span class=mute>ホーム直下の git のクローン</span></h2>{repos}</section>')
 

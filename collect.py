@@ -503,9 +503,22 @@ def render(data, m):
     return page("運用", "", views)
 
 
+def pushed(name):
+    """A snapshot a machine sent itself (push.py) to ~/.ai-ops/push/<name>.json; marked when it is old."""
+    f = Path.home() / f".ai-ops/push/{name}.json"
+    if not f.exists():
+        return {"error": "まだ届いていない（push.py が動いていない）"}
+    d = json.loads(f.read_text())
+    age = (time.time() - f.stat().st_mtime) / 60
+    if age > 30:
+        d["stale"] = f"{age / 60:.1f} 時間前の情報（送り元がスリープ中かも）" if age > 90 else f"{age:.0f} 分前の情報"
+    return d
+
+
 def collect(config, yes):
     load_config(config)
-    data = {h["name"]: probe(h["name"], h["ssh"], yes, h.get("installed", False)) for h in CFG["hosts"]}
+    data = {h["name"]: pushed(h["push"]) if h.get("push") else probe(h["name"], h["ssh"], yes, h.get("installed", False))
+            for h in CFG["hosts"]}
     (HERE / "last.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
     m = hub()
     (HERE / "dashboard.html").write_text(render(data, m))
