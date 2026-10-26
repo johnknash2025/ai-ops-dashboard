@@ -59,13 +59,20 @@ def consented(name, how, yes):
     return True
 
 
-def probe(name, ssh, yes):
-    how = "ssh " + " ".join(ssh)
+def probe(name, ssh, yes, installed=False):
+    """ssh [] = this machine. installed = the target's authorized_keys runs remote_probe.py as a forced command,
+    so the key can do nothing else and nothing is sent to run."""
+    how = ("ssh " + " ".join(ssh) + (" (installed probe)" if installed else "")) if ssh else "this machine"
     if not consented(name, how, yes):
         return {"error": "not allowed yet: run collect.py in a terminal and answer y"}
+    if not ssh:
+        cmd = [sys.executable, "-"]
+    elif installed:
+        cmd = ["ssh", "-T", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", *ssh]
+    else:
+        cmd = ["ssh", "-o", "ConnectTimeout=8", *ssh, "python3 -"]
     try:
-        r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", *ssh, "python3 -"], input=PROBE,
-                           capture_output=True, text=True, timeout=180)
+        r = subprocess.run(cmd, input="" if installed else PROBE, capture_output=True, text=True, timeout=180)
         return json.loads(r.stdout) if r.stdout.strip() else {"error": (r.stderr or "no output").strip()[:200]}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
@@ -363,17 +370,22 @@ def render(data, m):
     return page("運用", overview(data) + "".join(out))
 
 
+def collect(config, yes):
+    load_config(config)
+    data = {h["name"]: probe(h["name"], h["ssh"], yes, h.get("installed", False)) for h in CFG["hosts"]}
+    (HERE / "last.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    m = hub()
+    (HERE / "dashboard.html").write_text(render(data, m))
+    (HERE / "network.html").write_text(render_network(data, m))
+    return data
+
+
 def main():
     ap = argparse.ArgumentParser(description="Who does what on your local AI machines, as one HTML page.")
     ap.add_argument("--config", type=Path, default=CONF_DIR / "hosts.json")
     ap.add_argument("--yes", action="store_true", help="accept the read-only probe for every host without asking")
     a = ap.parse_args()
-    load_config(a.config)
-    data = {h["name"]: probe(h["name"], h["ssh"], a.yes) for h in CFG["hosts"]}
-    (HERE / "last.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
-    m = hub()
-    (HERE / "dashboard.html").write_text(render(data, m))
-    (HERE / "network.html").write_text(render_network(data, m))
+    collect(a.config, a.yes)
     print("wrote", HERE / "dashboard.html")
 
 

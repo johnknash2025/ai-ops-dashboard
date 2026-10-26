@@ -32,6 +32,16 @@ Two pages come out: `dashboard.html` (jobs and models) and `network.html` (addre
 `hosts.json` also takes short notes per job (`"notes": {"unit-name": "what it is for"}`) and what the hub itself uses.
 Your config, consent record, `last.json` and `dashboard.html` stay out of git.
 
+## Always-on (e.g. a DGX Spark class box or a home server)
+
+    python3 collect.py                      # once, in a terminal on that machine: answer y per host
+    python3 serve.py                        # 127.0.0.1:8795, refreshed every 10 minutes
+    tailscale serve --bg --https=8795 http://127.0.0.1:8795   # HTTPS inside your tailnet only
+
+In `hosts.json`, `"ssh": []` means the serving machine itself. For other machines, give the serving machine a key that
+can only run the probe: `./install-probe-key.sh <its .pub> <its addresses> <ssh target>` adds it to the target's
+`authorized_keys` as a forced command with `restrict` and `from=`, and the host entry gets `"installed": true`.
+
 ## License
 
 MIT
