@@ -159,6 +159,24 @@ def run_times(schedule):
     return times, " · ".join(f"{int(h)}:{round(h % 1 * 60):02d}" for h in times)
 
 
+def cron_schedule(line):
+    """'7,37 * * * * cmd' -> ('OnCalendar=*-*-* H:M:00 ...' text that run_times() understands, command)."""
+    f = line.split(None, 5)
+    if len(f) < 6 or f[0].startswith("@"):
+        return None, line
+    mi, hr, dom, mon, dow, cmd = f
+    if (dom, mon, dow) != ("*", "*", "*"):
+        return f"（{dom} {mon} {dow} のみ）", cmd
+    conv = lambda x: x.replace("*/", "0/")
+    return f"OnCalendar=*-*-* {conv(hr)}:{conv(mi)}:00", cmd
+
+
+def cron_name(cmd):
+    """A short name for a cron command: the script's file name without the extension."""
+    m = re.findall(r"[\w.-]+\.(?:py|sh|js)", cmd)
+    return m[-1].rsplit(".", 1)[0] if m else cmd.split()[0].rsplit("/", 1)[-1]
+
+
 def strip(schedule, color):
     """A 24-hour band: a mark at every run time, a shaded band for interval jobs, and a line for now."""
     times, phrase = run_times(schedule)
@@ -423,6 +441,15 @@ def out_timers(data):
                          f'<td><b>{esc(name)}</b>{ev}<div class=mute>{esc(note(t["unit"]) or t["description"])}</div></td>'
                          f'<td>{strip(t["schedule"], COLORS.get(h))}</td>'
                          f'<td class={"ok" if t["result"] == "success" else "bad"}>{"✅" if t["result"] == "success" else "❌ " + esc(t["result"])}</td></tr>'))
+        for line in d.get("cron", []):
+            sched, cmd = cron_schedule(line)
+            if sched is None:
+                continue
+            name = cron_name(cmd)
+            rows.append((True, h, f'<tr><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
+                         f'<td><b>{esc(name)}</b> <span class=mute>cron</span><div class=mute>{esc(NOTES.get(name, "") or cmd[:90])}</div></td>'
+                         f'<td>{strip(sched, COLORS.get(h)) if sched.startswith("OnCalendar") else esc(sched)}</td>'
+                         f'<td class=mute title="cron は結果を記録しない">―</td></tr>'))
     rows.sort(key=lambda r: (r[0], r[1]))
     yield ('<section class=periodic><h2>🕒 すべての定期の仕事 <span class=mute>失敗が上・帯は24時間、赤線は今</span></h2>'
            '<table><tr><th>マシン</th><th>仕事</th><th>いつ</th><th>結果</th></tr>' + "".join(r[2] for r in rows) + '</table></section>')
