@@ -4,7 +4,7 @@
 #   command="/usr/bin/python3 .ai-ops/remote_probe.py",restrict,from="<addresses>" <key>
 # so that key can only run the read-only probe (no shell, no forwarding, no pty), and only from those addresses.
 # Usage: ./install-probe-key.sh <pubkey-file> <from-addresses> <ssh target and options...>
-#   ./install-probe-key.sh gx10-probe.pub 192.168.1.42,100.75.250.115 rtx3090
+#   ./install-probe-key.sh server-probe.pub 192.0.2.10,100.64.0.10 user@workstation.local
 set -euo pipefail
 cd "$(dirname "$0")"
 pub=$1; from=$2; shift 2
