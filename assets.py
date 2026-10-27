@@ -86,14 +86,59 @@ def render_roadmap(data):
     items = [(h, d["data"]["roadmap"]) for h, d in data.items() if (d.get("data") or {}).get("roadmap")]
     if not items:
         return "<section><p class=mute>ロードマップのデータがまだありません（毎週の roadmap が ~/.ai-ops/data/roadmap.json に書きます）</p></section>"
-    out = []
+    link = lambda x, t: f'<a href="{esc(x["url"])}" target=_blank rel=noopener>{esc(t)}</a>'
+    out, tl = [], []
     for _, rm in items:
         for t in rm.get("tools", []):
-            sure = "".join(f'<li>✅ <a href="{esc(x["url"])}" target=_blank rel=noopener>{esc(x["title"])}</a></li>' for x in t.get("sure", [])[:4])
-            likely = "".join(f'<li>🔜 {"🆕 " if x.get("new") else ""}<a href="{esc(x["url"])}" target=_blank rel=noopener>{esc(x["title"])}</a></li>'
-                             for x in t.get("likely", [])[:5])
+            for r in t.get("releases", [])[:3]:
+                tl.append((r["date"], t["name"], "済", link(r, r["tag"]) + (f' <span class=mute>{esc(r["note"][:90])}</span>' if r.get("note") else "")))
+            if t.get("next_date"):
+                tl.append((t["next_date"], t["name"], "目安", f'次の版（マージ済み {len(t.get("merged", []))} 件が入る見込み）'))
+            for m in t.get("milestones", []):
+                if m.get("due"):
+                    tl.append((m["due"], t["name"], "予定", link(m, m["title"]) + f' <span class=mute>残り {m["open"]}</span>'))
+            merged = "".join(f'<li>📦 {link(x, x["title"])} <span class=mute>{esc(x.get("date", ""))}</span></li>' for x in t.get("merged", [])[:8])
+            sure = "".join(f'<li>✅ {link(x, x["title"])}</li>' for x in t.get("sure", [])[:4])
+            likely = "".join(f'<li>🔜 {"🆕 " if x.get("new") else ""}{link(x, x["title"])}</li>' for x in t.get("likely", [])[:5])
+            watch = "".join(f'<li>👀 {link(x, x["title"])} <span class=mute>👍{x.get("votes", 0)}</span></li>' for x in t.get("watch", [])[:3])
+            rels = " · ".join(f'{link(r, r["tag"])} <span class=mute>{esc(r["date"])}</span>' for r in t.get("releases", [])[:5])
             out.append(f'<section><h2>{esc(t["name"])} <span class=mute>最新 {esc(t.get("latest") or "?")} · {esc(t.get("next") or "")}'
-                       f'{f" · 今週の新しい項目 {t["new"]}" if t.get("new") else ""}</span></h2><ul>{sure}{likely}</ul>'
+                       f'{f" · 今週の新しい項目 {t["new"]}" if t.get("new") else ""}</span></h2>'
+                       f'{f"<p class=mute>最近の版: {rels}</p>" if rels else ""}'
+                       f'{f"<h3>次の版に入る（マージ済み）</h3><ul>{merged}</ul>" if merged else ""}'
+                       f'{f"<h3>入りそう</h3><ul>{sure}{likely}</ul>" if sure or likely else ""}'
+                       f'{f"<h3>要望（様子見）</h3><ul>{watch}</ul>" if watch else ""}'
                        f'<p class=mute>{esc(t.get("mine") or "")}</p></section>')
-        out.insert(0, f'<p class=mute>更新 {esc(rm.get("updated", ""))} · ✅ ほぼ確定 🔜 可能性が高い · 全文は Obsidian の「ロードマップ」</p>')
-    return "".join(out)
+        upd = rm.get("updated", "")
+    tl.sort(key=lambda x: x[0], reverse=True)
+    rows = "".join(f'<tr><td>{esc(d)}</td><td>{esc(n)}</td><td>{k}</td><td>{h}</td></tr>' for d, n, k, h in tl[:40])
+    head = (f'<p class=mute>更新 {esc(upd)} · 📦 マージ済み＝次の版にほぼ確実に入る · ✅ マイルストーン付き · 🔜 保守者の進行中 PR · '
+            f'「目安」は過去の間隔からの推定で公式の予定ではない · 全文は Obsidian の「ロードマップ」</p>'
+            f'<section><h2>🗓 時系列</h2><table><tr><th>日付</th><th>ツール</th><th></th><th>内容</th></tr>{rows}</table></section>')
+    return head + "".join(out)
+
+
+def render_prices(data):
+    items = [d["data"]["prices"] for d in data.values() if (d.get("data") or {}).get("prices")]
+    if not items:
+        return "<section><p class=mute>価格のデータがまだありません（調達係の pricewatch が 1 日 2 回 ~/.ai-ops/data/prices.json に書きます）</p></section>"
+    pr = items[0]
+    yen = lambda v: f"{v:,} 円" if isinstance(v, int) else "—"
+    rows = []
+    for q, d in pr.get("items", {}).items():
+        for cond in ("新品", "中古"):
+            v = d.get(cond)
+            if not v:
+                continue
+            mark = " 🔻" if v.get("low30") and v["price"] < v["low30"] else ""
+            rows.append(f'<tr><td>{esc(q)}</td><td>{cond}</td><td><b>{yen(v["price"])}</b>{mark}</td><td>{yen(v.get("low30"))}</td>'
+                        f'<td><a href="{esc(v["url"])}" target=_blank rel=noopener>{esc(v["shop"])}</a></td>'
+                        f'<td class=mute>{esc(v["name"][:60])}</td><td>{v.get("count", "")}</td></tr>')
+    led = "".join(f'<tr><td>{esc(o["item"])}</td><td>{esc(o.get("where", ""))}</td><td>{yen(o.get("market_used"))}</td>'
+                  f'<td>{yen(o.get("market_new"))}</td><td class=mute>{esc(o.get("note", ""))}</td></tr>' for o in pr.get("ledger", []))
+    return (f'<p class=mute>更新 {esc(pr.get("updated", ""))} · 在庫を持つ店だけ（{esc("・".join(pr.get("shops", [])))}）· 在庫ありの最安 · '
+            f'🔻＝30日の最安を更新 · 買う・売るは持ち主が判断（エージェントは案まで）</p>'
+            f'<section><h2>💴 今日の最安</h2><table><tr><th>品目</th><th>状態</th><th>最安</th><th>30日の最安</th><th>店</th><th>商品</th><th>件数</th></tr>'
+            f'{"".join(rows)}</table></section>'
+            f'<section><h2>📒 持っている機材</h2><table><tr><th>機材</th><th>場所</th><th>中古相場</th><th>新品</th><th>メモ</th></tr>{led}</table>'
+            f'<p class=mute>中古相場は店頭の売値の最安。売るときの買取価格はこれより低い。</p></section>')
