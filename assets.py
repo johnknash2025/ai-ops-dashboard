@@ -141,11 +141,19 @@ def render_prices(data):
         parts = "".join(f'<li>{esc(x["part"])} ×{x["n"]}: {yen(x["price"])}（<a href="{esc(x["url"])}" target=_blank rel=noopener>{esc(x["shop"])}</a>）</li>'
                         for x in b["parts"])
         miss = f'<li class=mute>在庫なし: {esc("・".join(b["missing"]))}</li>' if b["missing"] else ""
+        tr = [t for _, t in b.get("trend", [])]
+        trend = (f' · 最初 {yen(tr[0])} → 今 {yen(tr[-1])}（{(tr[-1] - tr[0]) * 100 // tr[0]:+d}%、最安 {yen(min(tr))}、{len(tr)} 日分）'
+                 if len(tr) > 1 else "")
         bl += (f'<section><h3>{esc(b["name"])} — {yen(b["total"]) if b["total"] else "部品がそろわず"}'
-               f' <span class=mute>· 電気代 約 {b["power_month"]:,} 円/月</span></h3><ul>{parts}{miss}</ul></section>')
+               f' <span class=mute>· 電気代 約 {b["power_month"]:,} 円/月{trend}</span></h3><ul>{parts}{miss}</ul></section>')
+    ws = pr.get("whole_server") or {}
+    if ws:
+        bl += '<section><h3>比較: 完成品の EPYC サーバー</h3><ul>' + "".join(
+            f'<li>{c}: {yen(v["price"])}（<a href="{esc(v["url"])}" target=_blank rel=noopener>{esc(v["shop"])}</a>）'
+            f'<span class=mute> {esc(v["name"][:70])}</span></li>' for c, v in ws.items()) + '</ul></section>'
     if bl:
-        bl = ('<section><h2>🏗 最先端 MoE 用の構成（Kimi K3 2ビット級）</h2><p class=mute>今日の最安から。CPU・マザー・メモリのみ'
-              '（ケース・電源・冷却・GPU は別）。電気代は平均 450W・31 円/kWh の目安。</p></section>' + bl)
+        bl = ('<section><h2>🏗 最先端 MoE 用の自作構成（1ソケット 12ch / 2ソケット 24ch）</h2><p class=mute>今日の最安から。CPU・マザー・メモリ・クーラー・電源'
+              '（ケース・GPU は別）。電気代は平均 450W / 700W・31 円/kWh の目安。</p></section>' + bl)
     return (f'<p class=mute>更新 {esc(pr.get("updated", ""))} · 在庫を持つ店だけ（{esc("・".join(pr.get("shops", [])))}）· 在庫ありの最安 · '
             f'🔻＝30日の最安を更新 · 買う・売るは持ち主が判断（エージェントは案まで）</p>'
             f'<section><h2>💴 今日の最安</h2><table><tr><th>品目</th><th>状態</th><th>最安</th><th>30日の最安</th><th>店</th><th>商品</th><th>件数</th></tr>'
