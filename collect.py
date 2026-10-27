@@ -302,14 +302,15 @@ table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--li
 .diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
 details.host>summary{{cursor:pointer;list-style:none;font-size:16px;font-weight:600;padding:10px 0}}details.host>summary::-webkit-details-marker{{display:none}}
 .alert{{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:10px;background:var(--evbg);margin:6px 0}}
-a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg);border-radius:8px}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}
+a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg);border-radius:8px}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}@keyframes fl{{from{{background:#f5c54266}}to{{background:transparent}}}}tr.flash td{{animation:fl 2.5s}}.chip{{display:inline-block;font-size:12px;border:1px solid var(--per);border-radius:999px;padding:0 8px;margin:2px;text-decoration:none}}.chip.ev{{border-color:var(--ev);color:var(--ev)}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}
 .view{{display:none}}.view.on{{display:block}}</style>
 <nav class=rail>{rail}</nav><main><header><h1>ローカル AI 運用</h1><span class=mute>更新 {time.strftime('%m/%d %H:%M')} · 10 分ごと</span></header>
 {body}</main>
 <script>
-function show(){{var v=(location.hash||'#home').slice(1),f=document.getElementById('v-'+v);if(!f){{v='home';f=document.getElementById('v-home')}}
+function show(){{var p=decodeURIComponent((location.hash||'#home').slice(1)).split('/'),v=p[0],f=document.getElementById('v-'+v);if(!f){{v='home';f=document.getElementById('v-home')}}
 if(!f)return;document.querySelectorAll('.view').forEach(function(e){{e.classList.toggle('on',e===f)}});
-document.querySelectorAll('nav.rail a').forEach(function(a){{a.classList.toggle('on',a.dataset.v===v)}});scrollTo(0,0)}}
+document.querySelectorAll('nav.rail a').forEach(function(a){{a.classList.toggle('on',a.dataset.v===v)}});scrollTo(0,0);
+var t=p[1]&&f.querySelector('[data-k="'+p[1].replace(/"/g,'')+'"]');if(t){{t.scrollIntoView({{block:'center'}});t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash')}}}}
 addEventListener('hashchange',show);show();
 </script>"""
 
@@ -404,7 +405,7 @@ def events_section(data):
         hits = [e for e in seen if re.search(r.get("match", "$^"), e["type"]) and (not r.get("source") or e["source"] == r["source"])]
         today = sum(e["date"] == now for e in hits)
         last = f'{hits[-1]["date"][5:]} {hits[-1]["time"]}' if hits else "まだなし"
-        rows.append(f'<tr><td><b>{esc(r.get("name", ""))}</b><div class=mute>{esc(r.get("source", ""))}: <code>{esc(r.get("match", ""))}</code></div></td>'
+        rows.append(f'<tr data-k="{esc(r.get("key") or r.get("name", ""))}"><td><b>{esc(r.get("name", ""))}</b><div class=mute>{esc(r.get("source", ""))}: <code>{esc(r.get("match", ""))}</code></div></td>'
                     f'<td>{esc(r.get("unit", ""))}<div class=mute>{esc(r.get("host", ""))}</div></td><td>{today}</td><td>{esc(last)}</td></tr>')
     recent = "".join(f'<li><span class=mute>{esc(e["date"][5:])} {esc(e["time"])}</span> {esc(e["source"])} <code>{esc(e["type"])}</code> {esc(e["repo"])}</li>'
                      for e in seen[-10:][::-1]) or '<li class=mute>まだイベントはありません</li>'
@@ -440,7 +441,7 @@ def out_timers(data):
         for t in d.get("timers", []):
             name = t["unit"].removesuffix(".service")
             ev = ' <span class=evchip>⚡</span>' if name in event_units() else ""
-            rows.append((t["result"] == "success", h, f'<tr><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
+            rows.append((t["result"] == "success", h, f'<tr data-k="{esc(name)}"><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
                          f'<td><b>{esc(name)}</b>{ev}<div class=mute>{esc(note(t["unit"]) or t["description"])}</div></td>'
                          f'<td>{strip(t["schedule"], COLORS.get(h))}</td>'
                          f'<td class={"ok" if t["result"] == "success" else "bad"}>{"✅" if t["result"] == "success" else "❌ " + esc(t["result"])}</td></tr>'))
@@ -449,7 +450,7 @@ def out_timers(data):
             if sched is None:
                 continue
             name = cron_name(cmd)
-            rows.append((True, h, f'<tr><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
+            rows.append((True, h, f'<tr data-k="{esc(name)}"><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
                          f'<td><b>{esc(name)}</b> <span class=mute>cron</span><div class=mute>{esc(NOTES.get(name, "") or cmd[:90])}</div></td>'
                          f'<td>{strip(sched, COLORS.get(h)) if sched.startswith("OnCalendar") else esc(sched)}</td>'
                          f'<td class=mute title="cron は結果を記録しない">―</td></tr>'))
@@ -499,7 +500,7 @@ def render(data, m):
              "reports": reports_section(data) or "<section><p class=mute>まだ報告はありません</p></section>",
              "machines": hosts, "net": render_network(data, m),
              "assets": assets.render_assets(data, hostname_of, COLORS), "roadmap": assets.render_roadmap(data),
-             "org": org.render(CFG.get("agents", []), data, {k: v[1] for k, v in LEVEL.items()})}
+             "org": org.render(CFG.get("agents", []), data, {k: v[1] for k, v in LEVEL.items()}, CFG.get("events", []))}
     return page("運用", "", views)
 
 

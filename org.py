@@ -3,7 +3,9 @@
 Each agent: {"name", "layer": "owner|builder|guardian|base", "scope": "what it is responsible for",
              "can": ["read", "draft", "pr", "comment", "write", ...], "model": "which LLM (or none)",
              "local_only": true if it must stay on local models, "confidential": true if it reads mail/health/money,
-             "jobs": ["systemd unit or cron script names it owns"], "reviews": "name of the agent whose work it checks"}
+             "jobs": ["systemd unit or cron script names it owns"], "reviews": "name of the agent whose work it checks",
+             "starts": ["other ways it starts, e.g. 'label agent:go'"], "flow": ["step", ...], "output": "where results go"}
+Event rules (top-level "events") that name the agent in "agent", or whose "unit" is one of its jobs, are linked as triggers.
 Checks: jobs nobody owns, a builder reviewed by itself or by the same model, guardians that can write,
 confidential agents that are not local-only, owners without any job, agents whose jobs are failing.
 """
@@ -66,7 +68,30 @@ def checks(agents, data):
     return out
 
 
-def render(agents, data, level_colors):
+def workflows(agents, data, events):
+    """One row per agent: what starts it (links into the 🕒 / ⚡ views), its steps and where the result goes."""
+    st = job_status(data)
+    rows = []
+    for a in agents:
+        trig = []
+        for j in a.get("jobs", []):
+            ok = st.get(j, (None, None))[0]
+            mark = "" if ok is None else ("" if ok else " ❌")
+            trig.append(f'<a href="#jobs/{esc(j)}" class=chip>🕒 {esc(j)}{mark}</a>' if j in st else f'<span class="chip mute">{esc(j)}（未検出）</span>')
+        for e in events:
+            if e.get("agent") == a["name"] or e.get("unit") in a.get("jobs", []):
+                trig.append(f'<a href="#events/{esc(e.get("key") or e["name"])}" class="chip ev">⚡ {esc(e["name"])}</a>')
+        trig += [f'<span class="chip ev">✋ {esc(x)}</span>' for x in a.get("starts", [])]
+        flow = " → ".join(esc(x) for x in a.get("flow", [])) or '<span class=mute>（手順はまだ書かれていない）</span>'
+        rows.append(f'<tr><td><b>{esc(a["name"])}</b><div class=mute>{esc(a.get("model", ""))}</div></td>'
+                    f'<td>{" ".join(trig) or "<span class=mute>なし</span>"}</td><td>{flow}'
+                    f'{f"<div class=mute>→ {esc(a.get('output'))}</div>" if a.get("output") else ""}</td>'
+                    f'<td class=mute>{esc(", ".join(a.get("can", [])))}</td></tr>')
+    return ('<section><h2>🔁 エージェントとワークフロー <span class=mute>🕒 定期 · ⚡ イベント · ✋ 人の合図。押すとその仕事へ</span></h2>'
+            '<table><tr><th>エージェント</th><th>何で動く</th><th>手順と出し先</th><th>権限</th></tr>' + "".join(rows) + '</table></section>')
+
+
+def render(agents, data, level_colors, events=()):
     if not agents:
         return ('<section><h2>🏢 組織</h2><p class=mute>hosts.json に "agents" の名簿がありません。'
                 'README の「組織」の節を見て、エージェントごとに層・担当範囲・権限・仕事を書くと、ここに組織図と診断が出ます。</p></section>')
@@ -104,5 +129,6 @@ def render(agents, data, level_colors):
     items = "".join(f'<div class=rep style="border-left:4px solid {level_colors.get(lv, "var(--mute)")}"><b>{esc(t)}</b>'
                     f'<div class=mute>{esc(d)}</div></div>' for lv, t, d in sorted(found, key=lambda x: ["high", "medium", "info"].index(x[0])))
     return (f'<section><h2>🏢 組織 <span class=mute>点: 緑=仕事は成功 赤=失敗中 灰=仕事なし · 枠にカーソルで担当範囲と権限</span></h2>{svg}</section>'
+            + workflows(agents, data, events) +
             f'<section class=reports><h2>🩺 組織の健康診断 <span class=mute>{len(found)} 件</span></h2>'
             f'{items or "<p class=mute>問題は見つかりませんでした</p>"}</section>')
