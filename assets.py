@@ -136,9 +136,19 @@ def render_prices(data):
                         f'<td class=mute>{esc(v["name"][:60])}</td><td>{v.get("count", "")}</td></tr>')
     led = "".join(f'<tr><td>{esc(o["item"])}</td><td>{esc(o.get("where", ""))}</td><td>{yen(o.get("market_used"))}</td>'
                   f'<td>{yen(o.get("market_new"))}</td><td class=mute>{esc(o.get("note", ""))}</td></tr>' for o in pr.get("ledger", []))
+    bl = ""
+    for b in pr.get("builds", []):
+        parts = "".join(f'<li>{esc(x["part"])} ×{x["n"]}: {yen(x["price"])}（<a href="{esc(x["url"])}" target=_blank rel=noopener>{esc(x["shop"])}</a>）</li>'
+                        for x in b["parts"])
+        miss = f'<li class=mute>在庫なし: {esc("・".join(b["missing"]))}</li>' if b["missing"] else ""
+        bl += (f'<section><h3>{esc(b["name"])} — {yen(b["total"]) if b["total"] else "部品がそろわず"}'
+               f' <span class=mute>· 電気代 約 {b["power_month"]:,} 円/月</span></h3><ul>{parts}{miss}</ul></section>')
+    if bl:
+        bl = ('<section><h2>🏗 最先端 MoE 用の構成（Kimi K3 2ビット級）</h2><p class=mute>今日の最安から。CPU・マザー・メモリのみ'
+              '（ケース・電源・冷却・GPU は別）。電気代は平均 450W・31 円/kWh の目安。</p></section>' + bl)
     return (f'<p class=mute>更新 {esc(pr.get("updated", ""))} · 在庫を持つ店だけ（{esc("・".join(pr.get("shops", [])))}）· 在庫ありの最安 · '
             f'🔻＝30日の最安を更新 · 買う・売るは持ち主が判断（エージェントは案まで）</p>'
             f'<section><h2>💴 今日の最安</h2><table><tr><th>品目</th><th>状態</th><th>最安</th><th>30日の最安</th><th>店</th><th>商品</th><th>件数</th></tr>'
             f'{"".join(rows)}</table></section>'
             f'<section><h2>📒 持っている機材</h2><table><tr><th>機材</th><th>場所</th><th>中古相場</th><th>新品</th><th>メモ</th></tr>{led}</table>'
-            f'<p class=mute>中古相場は店頭の売値の最安。売るときの買取価格はこれより低い。</p></section>')
+            f'<p class=mute>中古相場は店頭の売値の最安。売るときの買取価格はこれより低い。</p></section>' + bl)
