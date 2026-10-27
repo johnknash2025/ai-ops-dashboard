@@ -20,6 +20,36 @@ def sh(cmd):
         return ""
 
 
+def parse_cpu(lscpu_out="", cpuinfo="", devicetree="", arch=""):
+    """CPU name from lscpu, /proc/cpuinfo, or the device tree; never return an empty label."""
+    fields = {}
+    for text in (lscpu_out, cpuinfo):
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+            key, value = (x.strip() for x in line.split(":", 1))
+            value = value.replace("\x00", "").strip()
+            if key and value and key.lower() not in fields:
+                fields[key.lower()] = value
+    for key in ("model name", "cpu model", "hardware", "processor", "model"):
+        value = fields.get(key, "")
+        if value and not value.isdigit():   # lscpu's Model: 0 is a revision, not a name
+            return value
+    tree = devicetree.replace("\x00", "").strip().splitlines()
+    if tree and tree[0].strip():
+        return tree[0].strip()
+    return f"{arch} CPU" if arch else "不明な CPU"
+
+
+def cpu_name():
+    return parse_cpu(
+        sh("lscpu"),
+        sh("cat /proc/cpuinfo 2>/dev/null"),
+        sh("cat /sys/firmware/devicetree/base/model 2>/dev/null || cat /proc/device-tree/model 2>/dev/null"),
+        sh("uname -m").strip(),
+    )
+
+
 def get(url, timeout=3):
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -128,29 +158,6 @@ def gpu():
     return f"AMD GPU VRAM used {int(amd) // 2**20} MiB" if amd.isdigit() else ""
 
 
-def network():
-    """Addresses and who can reach each listening TCP port: only this machine, the tailnet, or every network."""
-    addrs = []
-    for line in sh("ip -4 -br addr 2>/dev/null").splitlines():
-        p = line.split()
-        if len(p) >= 3 and p[0] != "lo" and not p[0].startswith(("docker", "br-", "veth", "virbr")):
-            addrs.append({"iface": p[0], "addr": p[2].split("/")[0]})
-    ports = {}
-    for line in sh("ss -ltnpH 2>/dev/null").splitlines():
-        p = line.split()
-        if len(p) < 4:
-            continue
-        host, _, port = p[3].rpartition(":")
-        host = host.strip("[]").split("%")[0]
-        scope = ("local" if host.startswith("127.") or host == "::1" else
-                 "tailnet" if host.startswith("100.") or host.startswith("fd7a:") else "all")
-        proc = re.search(r'users:\(\("([^"]+)', line)
-        prev = ports.get(port)
-        if not prev or ["local", "tailnet", "all"].index(scope) > ["local", "tailnet", "all"].index(prev["scope"]):
-            ports[port] = {"port": int(port), "scope": scope, "process": proc.group(1) if proc else ""}
-    return {"addrs": addrs, "listen": sorted(ports.values(), key=lambda x: x["port"])}
-
-
 def inbox_events():
     """Recent events taken from a webhook inbox (agent-inbox writes ~/agent-inbox/events/<date>.md), newest last."""
     d = os.path.expanduser("~/agent-inbox/events")
@@ -184,7 +191,7 @@ def reports():
 def inventory():
     """Hardware, OS, storage, versions of common tools, and git checkouts in the home folder (remote, tag, last commit)."""
     os_rel = dict(l.split("=", 1) for l in sh("cat /etc/os-release").splitlines() if "=" in l)
-    cpu = re.search(r"Model name:\s*(.+)", sh("lscpu"))
+    arch = sh("uname -m").strip()
     disks = []
     for line in sh("df -B1 -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs --output=source,fstype,size,used,target 2>/dev/null").splitlines()[1:]:
         p = line.split()
@@ -207,8 +214,8 @@ def inventory():
             url = re.sub(r"https://[^@/]+@", "https://", url)            # never keep credentials embedded in a URL
             repos.append({"dir": d, "remote": url, "tag": sh(f"git -C '{g}' describe --tags --always 2>/dev/null").strip()[:40],
                           "last_commit": sh(f"git -C '{g}' log -1 --format=%cs 2>/dev/null").strip()})
-    return {"os": os_rel.get("PRETTY_NAME", "").strip('"'), "kernel": sh("uname -r").strip(), "arch": sh("uname -m").strip(),
-            "cpu": cpu.group(1).strip() if cpu else "", "cores": os.cpu_count(),
+    return {"os": os_rel.get("PRETTY_NAME", "").strip('"'), "kernel": sh("uname -r").strip(), "arch": arch,
+            "cpu": cpu_name(), "cores": os.cpu_count(),
             "ram_gb": round(int(sh("awk '/MemTotal/{print $2}' /proc/meminfo") or 0) / 2**20),
             "disks": disks, "zpools": [{"name": p[0], "size": p[1], "alloc": p[2], "health": p[3]} for p in pools if len(p) >= 4],
             "tools": tools, "repos": repos[:40]}
@@ -257,9 +264,15 @@ def network():
     return {"addrs": addrs, "listen": sorted(ports.values(), key=lambda x: x["port"])}
 
 
-print(json.dumps({
-    "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
-    "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
-    "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "reports": reports(), "inventory": inventory(), "data": agent_data(), "net": network(), "events": inbox_events(), "reports": reports(), "inventory": inventory(), "data": agent_data(), "timers": timers(), "services": services(),
-    "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
-}, ensure_ascii=False))
+def main():
+    print(json.dumps({
+        "host": socket.gethostname(), "uptime": sh("uptime -p").strip(), "gpu": gpu(),
+        "mem": sh("free -g | awk '/Mem:/{print $3\"/\"$2\" GiB used\"}'").strip(),
+        "llm_servers": llm_servers(), "net": network(), "events": inbox_events(), "reports": reports(),
+        "inventory": inventory(), "data": agent_data(), "timers": timers(), "services": services(),
+        "cron": [l for l in sh("crontab -l 2>/dev/null").splitlines() if l.strip() and not l.startswith("#")],
+    }, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
