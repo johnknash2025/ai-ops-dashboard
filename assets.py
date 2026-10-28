@@ -185,3 +185,36 @@ def render_arch(data):
                     f"<th>専門家 / 1文字</th><th>KV/頭</th><th>MTP</th><th>文脈</th><th>手元に入る</th></tr>{rows}</table></details>")
     return (f"<section><h2>🧬 モデルの骨組み <span class=mute>{esc(a['updated'])} · 同じ骨組み＝エンジンは数字の変更で流用できる · 🎯 は狙いのモデル</span></h2>"
             + "".join(fams) + "</section>")
+
+
+def render_scorecard(data):
+    """📊 成績: is the agent system worth it? This week vs last week (local-agent-ops/scorecard)."""
+    s = next((d["data"]["scorecard"] for d in data.values() if (d.get("data") or {}).get("scorecard")), None)
+    if not s:
+        return "<section><p class=mute>まだありません（MacBook の scorecard.py）</p></section>"
+
+    def row(name, c, good_up=True, note=""):
+        diff = c["this"] - c["last"]
+        arrow = "→" if diff == 0 else ("↑" if diff > 0 else "↓")
+        cls = "" if diff == 0 else ("ok" if (diff > 0) == good_up else "bad")
+        return f"<tr><td>{esc(name)}<div class=mute>{esc(note)}</div></td><td><b>{c['this']}</b></td><td>{c['last']}</td><td class={cls}>{arrow}</td></tr>"
+    m, g, k = s["made"], s["guarded"], s["cost"]
+    ev = "".join(f"<li>{esc(l)}: 仕込んだ不具合 <b>{v['found']}/{v['of']}</b> 見つけた、きれいな変更への空振り {v['noise']}/2 <span class=mute>{esc(v['time'])}</span></li>"
+                 for l, v in s["caught"]["eval"].items()) or "<li class=mute>まだ測っていない</li>"
+    opn = "".join(f'<li><a href="{esc(p["url"])}">{esc(p["repo"])}</a></li>' for p in m["open_now"]) or "<li class=mute>なし</li>"
+    fails = "".join(f"<li>{esc(f['host'])} {esc(f['unit'])} <span class=mute>{esc(f['last'])}</span></li>" for f in k["failed_jobs_now"]) or "<li class=mute>なし</li>"
+    return f"""<section><h2>📊 成績 <span class=mute>{esc(s['updated'])} · 今週（直近 7 日）と先週。得たものが増え、手間が減っていれば有益</span></h2>
+<table><tr><th>得たもの</th><th>今週</th><th>先週</th><th></th></tr>
+{row('エージェントの PR', m['opened'], note='開発係が出した PR（agent/*）')}
+{row('マージされた PR', m['merged'], note='持ち主が取り込んだ = 本当に使えた')}
+{row('終わった課題', s['issues_finished'], note='PR まで行った課題')}
+{row('レビューの数', s['caught']['reviews'], note='ローカルのレビュー係が書いた')}
+{row('自動で当てたセキュリティ修正', g['auto_patched'], note='承認を待たずに当てたもの')}
+<tr><th>手間（少ないほど良い）</th><th></th><th></th><th></th></tr>
+{row('空振りした開発の回', k['dev_runs_made_nothing'], False, '変更なし・失敗・止めた')}
+{row('エンジンが固まった回', k['engine_stalls'], False, 'Strata / MAYA の見張りが止めた')}
+</table>
+<h3>レビュー係の腕前（review-eval）</h3><ul>{ev}</ul>
+<h3>確認待ちの PR</h3><ul>{opn}</ul>
+<h3>今失敗している定期の仕事</h3><ul>{fails}</ul>
+<p class=mute>通常更新の案（持ち主の判断待ち）: {g['left_for_owner']} 件 · {esc(s['owner_notes'])}</p></section>"""
