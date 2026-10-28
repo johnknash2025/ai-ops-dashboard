@@ -275,7 +275,7 @@ def overview(data):
 
 
 VIEWS = [("home", "🏠", "概要"), ("org", "🏢", "組織"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
-         ("machines", "🖥", "マシン"), ("assets", "🧰", "資産"), ("roadmap", "🗺", "予定"), ("prices", "💴", "価格"), ("net", "🌐", "ネット"), ("score", "📊", "成績"), ("arch", "🧬", "アーキ"), ("chat", "💬", "窓口")]
+         ("machines", "🖥", "マシン"), ("assets", "🧰", "資産"), ("roadmap", "🗺", "予定"), ("prices", "💴", "価格"), ("net", "🌐", "ネット"), ("health", "🩺", "手綱"), ("score", "📊", "成績"), ("arch", "🧬", "アーキ"), ("chat", "💬", "窓口")]
 
 
 def page(title, body, views=None):
@@ -501,7 +501,7 @@ def render(data, m):
              "reports": reports_section(data) or "<section><p class=mute>まだ報告はありません</p></section>",
              "machines": hosts, "net": render_network(data, m),
              "assets": assets.render_assets(data, hostname_of, COLORS), "roadmap": assets.render_roadmap(data), "prices": assets.render_prices(data),
-             "chat": chat.render(CFG), "arch": assets.render_arch(data), "score": assets.render_scorecard(data),
+             "chat": chat.render(CFG), "arch": assets.render_arch(data), "score": assets.render_scorecard(data), "health": assets.render_health(data),
              "org": org.render(CFG.get("agents", []), data, {k: v[1] for k, v in LEVEL.items()}, CFG.get("events", []))}
     return page("運用", "", views)
 

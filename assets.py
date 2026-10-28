@@ -218,3 +218,17 @@ def render_scorecard(data):
 <h3>確認待ちの PR</h3><ul>{opn}</ul>
 <h3>今失敗している定期の仕事</h3><ul>{fails}</ul>
 <p class=mute>通常更新の案（持ち主の判断待ち）: {g['left_for_owner']} 件 · {esc(s['owner_notes'])}</p></section>"""
+
+
+def render_health(data):
+    """🩺 手綱: the morning/evening end-to-end health check (local-agent-ops/healthcheck), written for a person to verify."""
+    h = next((d["data"]["health"] for d in data.values() if (d.get("data") or {}).get("health")), None)
+    if not h:
+        return "<section><p class=mute>まだありません（3090 の healthcheck）</p></section>"
+    ok = sum(c["ok"] for c in h["checks"])
+    rows = "".join(
+        f"<details{'' if c['ok'] else ' open'}><summary>{'✅' if c['ok'] else '❌'} <b>{esc(c['name'])}</b> — {esc(c['evidence'])}</summary>"
+        f"<ul><li>何を: {esc(c['what'])}</li><li>どうやって: {esc(c['how'])}</li><li>合格の条件: {esc(c['ok_if'])}</li>"
+        f"{'' if c['ok'] else '<li class=bad>次にすること: ' + esc(c['if_failed']) + '</li>'}</ul></details>" for c in h["checks"])
+    return (f"<section><h2>🩺 手綱 · 健康診断 <span class=mute>{esc(h['updated'])} · 7:50 と 19:50 に全体を一通り動かす · 報告 3090 ~/healthcheck/reports/{esc(h['report'])}</span></h2>"
+            f"<p class={'ok' if ok == len(h['checks']) else 'bad'}><b>{ok} / {len(h['checks'])} 合格</b></p>{rows}</section>")
