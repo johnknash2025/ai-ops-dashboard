@@ -160,3 +160,28 @@ def render_prices(data):
             f'{"".join(rows)}</table></section>'
             f'<section><h2>📒 持っている機材</h2><table><tr><th>機材</th><th>場所</th><th>中古相場</th><th>新品</th><th>メモ</th></tr>{led}</table>'
             f'<p class=mute>中古相場は店頭の売値の最安。売るときの買取価格はこれより低い。</p></section>' + bl)
+
+
+def render_arch(data):
+    """🧬 アーキ: model-watch's arch.py groups text models by skeleton (same signature = same engine, other sizes)."""
+    a = next((d["data"]["arch"] for d in data.values() if (d.get("data") or {}).get("arch")), None)
+    if not a:
+        return "<section><p class=mute>まだありません（GX10 の model-watch/arch.py）</p></section>"
+    n = lambda v: "—" if v in (None, "", 0) else esc(v)
+    fams = []
+    for f in a["families"][:40]:
+        ms = f["models"]
+        rows = "".join(
+            f"<tr><td>{'🎯 ' if m['target'] else ''}<a href=\"{esc(m['url'])}\">{esc(m['id'])}</a><div class=mute>{esc(m['created'])}</div></td>"
+            f"<td>{n(m.get('params_b'))}</td><td>{n(m.get('layers'))}</td><td>{n(m.get('hidden'))}</td>"
+            f"<td>{n(m.get('experts'))}{' / ' + esc(m['active']) if m.get('active') else ''}{' ＋共有' + esc(m['shared']) if m.get('shared') else ''}</td>"
+            f"<td>{n(m.get('kv_heads'))}/{n(m.get('heads'))}</td><td>{n(m.get('mtp'))}</td><td>{n(m.get('context'))}</td>"
+            f"<td class=mute>{esc(', '.join(m.get('fits') or []))}</td></tr>" for m in ms)
+        small = min((m.get("params_b") or 1e9) for m in ms)
+        hint = (f'<span class=ok>小さい同じ骨組み: {small:g}B から試せる</span>' if small < 60 and len(ms) > 1
+                else '<span class=mute>同じ骨組みの小さい版なし</span>')
+        fams.append(f"<details{' open' if any(m['target'] for m in ms) else ''}><summary><b>{esc(f['signature'])}</b> "
+                    f"<span class=mute>{len(ms)} モデル</span> {hint}</summary><table><tr><th>モデル</th><th>B</th><th>層</th><th>幅</th>"
+                    f"<th>専門家 / 1文字</th><th>KV/頭</th><th>MTP</th><th>文脈</th><th>手元に入る</th></tr>{rows}</table></details>")
+    return (f"<section><h2>🧬 モデルの骨組み <span class=mute>{esc(a['updated'])} · 同じ骨組み＝エンジンは数字の変更で流用できる · 🎯 は狙いのモデル</span></h2>"
+            + "".join(fams) + "</section>")
