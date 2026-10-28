@@ -48,7 +48,8 @@ def context(agent, data):
         s = [x["unit"] for x in d.get("services", []) if hit(x["unit"])]
         r = [{k: x.get(k) for k in ("time", "title", "level", "summary")} for x in d.get("reports") or []
              if hit(json.dumps(x, ensure_ascii=False)[:400])][-5:]
-        dd = {k: v for k, v in (d.get("data") or {}).items() if hit(k)}
+        # data files are named after what they hold (prices.json for pricewatch): match on the first 4 letters too
+        dd = {k: v for k, v in (d.get("data") or {}).items() if hit(k) or any(j[:4] == k[:4] for j in jobs)}
         if t or s or r or dd:
             ctx[host] = {"タイマー": [{k: x[k] for k in ("unit", "last", "result")} for x in t], "常駐": s, "報告": r,
                          "データ": json.dumps(dd, ensure_ascii=False)[:3000]}
