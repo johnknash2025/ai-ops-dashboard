@@ -13,6 +13,10 @@ import threading
 import time
 import traceback
 
+import json
+import urllib.parse
+
+import chat
 import collect
 
 PAGES = {"/": "dashboard.html", "/dashboard.html": "dashboard.html", "/network.html": "network.html",
@@ -20,8 +24,47 @@ PAGES = {"/": "dashboard.html", "/dashboard.html": "dashboard.html", "/network.h
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def reply(self, obj, code=200):
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def api_get(self, path, q):
+        if path == "/api/history":
+            return self.reply(chat.history(q.get("agent", [""])[0]))
+        if path == "/api/orders":   # each machine's puller fetches its own queued orders
+            return self.reply(chat.pending(q.get("host", [""])[0]))
+        self.send_error(404)
+
+    def do_POST(self):
+        # same-origin only: a custom header (forces a CORS preflight we never answer) and a matching Origin if sent
+        origin = self.headers.get("Origin")
+        if self.headers.get("X-AiOps") != "1" or (origin and urllib.parse.urlparse(origin).netloc != self.headers.get("Host")):
+            return self.send_error(403)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            req = json.loads(self.rfile.read(min(n, 20000)) or b"{}")
+        except ValueError:
+            return self.send_error(400)
+        cfg, data = collect.CFG, json.loads((collect.HERE / "last.json").read_text())
+        text = str(req.get("text", ""))[:4000]
+        if self.path == "/api/ask":
+            return self.reply(chat.ask(cfg, data, req.get("agent", ""), text))
+        if self.path == "/api/order":
+            return self.reply(chat.order(cfg, req.get("agent", ""), text))
+        if self.path == "/api/orders/ack":
+            return self.reply(chat.ack([str(i) for i in req.get("ids", [])]))
+        self.send_error(404)
+
     def do_GET(self):
-        name = PAGES.get(self.path.split("?")[0])
+        path, _, qs = self.path.partition("?")
+        if path.startswith("/api/"):
+            return self.api_get(path, urllib.parse.parse_qs(qs))
+        name = PAGES.get(path)
         f = collect.HERE / name if name else None
         if not f or not f.exists():
             self.send_error(404)
