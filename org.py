@@ -20,14 +20,25 @@ def esc(s):
     return html.escape(str(s))
 
 
+UNIT_SUFFIXES = (".service", ".timer", ".path", ".socket", ".target", ".mount", ".slice")
+
+
+def unit_stem(name):
+    """Unit name without its type suffix, same rule as collect.py (kept local to avoid a circular import)."""
+    for suf in UNIT_SUFFIXES:
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return name
+
+
 def job_status(data):
     """unit/script name -> (ok?, host). cron jobs have no result, so they count as ok."""
     st = {}
     for h, d in data.items():
         for t in d.get("timers", []):
-            st[t["unit"].removesuffix(".service")] = (t["result"] == "success", h)
+            st[unit_stem(t["unit"])] = (t["result"] == "success", h)
         for s in d.get("services", []):
-            st.setdefault(s["unit"].removesuffix(".service"), (True, h))
+            st.setdefault(unit_stem(s["unit"]), (True, h))
         for line in d.get("cron", []):
             import re
             m = re.findall(r"([\w.-]+)\.(?:py|sh|js)", line)
@@ -41,7 +52,7 @@ def checks(agents, data):
     by = {a["name"]: a for a in agents}
     owned = {j for a in agents for j in a.get("jobs", [])}
     out = []
-    timers = {t["unit"].removesuffix(".service") for d in data.values() for t in d.get("timers", [])}
+    timers = {unit_stem(t["unit"]) for d in data.values() for t in d.get("timers", [])}
     orphans = sorted(timers - owned)
     if orphans:
         out.append(("medium", f"持ち主のいない定期の仕事 {len(orphans)} 件", "、".join(orphans[:8]) + (" ほか" if len(orphans) > 8 else "")))
@@ -83,9 +94,11 @@ def workflows(agents, data, events):
                 trig.append(f'<a href="#events/{esc(e.get("key") or e["name"])}" class="chip ev">⚡ {esc(e["name"])}</a>')
         trig += [f'<span class="chip ev">✋ {esc(x)}</span>' for x in a.get("starts", [])]
         flow = " → ".join(esc(x) for x in a.get("flow", [])) or '<span class=mute>（手順はまだ書かれていない）</span>'
+        out = a.get("output")
+        ova = f'<div class=mute>→ {esc(out)}</div>' if out else ""
         rows.append(f'<tr><td><b>{esc(a["name"])}</b><div class=mute>{esc(a.get("model", ""))}</div></td>'
                     f'<td>{" ".join(trig) or "<span class=mute>なし</span>"}</td><td>{flow}'
-                    f'{f"<div class=mute>→ {esc(a.get('output'))}</div>" if a.get("output") else ""}</td>'
+                    f'{ova}</td>'
                     f'<td class=mute>{esc(", ".join(a.get("can", [])))}</td></tr>')
     return ('<section><h2>🔁 エージェントとワークフロー <span class=mute>🕒 定期 · ⚡ イベント · ✋ 人の合図。押すとその仕事へ</span></h2>'
             '<table><tr><th>エージェント</th><th>何で動く</th><th>手順と出し先</th><th>権限</th></tr>' + "".join(rows) + '</table></section>')

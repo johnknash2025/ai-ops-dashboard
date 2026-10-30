@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Serve the dashboard from an always-on machine and refresh it every few minutes.
 
-    python3 serve.py [--bind 127.0.0.1] [--port 8795] [--every 600]
+    python3.12 serve.py [--bind 127.0.0.1] [--port 8795] [--every 600]
 
 Binds to 127.0.0.1 by default: put it on your tailnet with `tailscale serve` (HTTPS, tailnet only) instead of
 opening a port. Only the two generated pages are served; nothing else in this folder is reachable.
 Consent is not asked here: run collect.py once in a terminal on this machine and answer y for each host.
 """
+import sys
+
+if sys.version_info < (3, 12):
+    sys.exit(f"Python 3.12 or newer is required (found {sys.version_info.major}.{sys.version_info.minor}). "
+             f"Try: python3.12 serve.py  (see README)")
+
 import argparse
 import http.server
 import threading

@@ -102,8 +102,9 @@ def render_roadmap(data):
             likely = "".join(f'<li>🔜 {"🆕 " if x.get("new") else ""}{link(x, x["title"])}</li>' for x in t.get("likely", [])[:5])
             watch = "".join(f'<li>👀 {link(x, x["title"])} <span class=mute>👍{x.get("votes", 0)}</span></li>' for x in t.get("watch", [])[:3])
             rels = " · ".join(f'{link(r, r["tag"])} <span class=mute>{esc(r["date"])}</span>' for r in t.get("releases", [])[:5])
+            new = f' · 今週の新しい項目 {t["new"]}' if t.get("new") else ""
             out.append(f'<section><h2>{esc(t["name"])} <span class=mute>最新 {esc(t.get("latest") or "?")} · {esc(t.get("next") or "")}'
-                       f'{f" · 今週の新しい項目 {t["new"]}" if t.get("new") else ""}</span></h2>'
+                       f'{new}</span></h2>'
                        f'{f"<p class=mute>最近の版: {rels}</p>" if rels else ""}'
                        f'{f"<h3>次の版に入る（マージ済み）</h3><ul>{merged}</ul>" if merged else ""}'
                        f'{f"<h3>入りそう</h3><ul>{sure}{likely}</ul>" if sure or likely else ""}'

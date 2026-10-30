@@ -37,7 +37,7 @@ The tool lives in the `ai-ops-dashboard` repository that contains this skill (`c
    `~/.ssh/config` and online tailnet peers without connecting to them. Show the list and ask the user which machines
    to include. Then write `~/.config/ai-ops-dashboard/hosts.json` (or `--write` for a first draft) and remove the ones
    they excluded. `"ssh": []` means the current machine.
-2. **Collect.** Ask the user to run `python3 collect.py` in a terminal and answer `y` per machine. Check the result in
+2. **Collect.** Ask the user to run `python3.12 collect.py` in a terminal and answer `y` per machine. Check the result in
    `last.json`: machines with an `"error"` were unreachable or not allowed; tell the user which and why.
 3. **Draft the roster.** Run `python3 skills/agent-org-map/scripts/draft_roster.py`. If a local OpenAI-compatible model
    is available, add `--llm-url <url>/v1 --llm-model <name>` so it can suggest layers for jobs the rules cannot place.
@@ -50,7 +50,7 @@ The tool lives in the `ai-ops-dashboard` repository that contains this skill (`c
    - builder: makes changes on request; the change is checked by a different agent, ideally a different model
    - guardian: watches everything, read-only
    - base: parts that do not decide anything (queues, inboxes, model servers, backups)
-5. **Save and draw.** Put the confirmed list under `"agents"` in `hosts.json`, run `python3 collect.py` again, and open
+5. **Save and draw.** Put the confirmed list under `"agents"` in `hosts.json`, run `python3.12 collect.py` again, and open
    `dashboard.html#org` (or the served page if `serve.py` runs). Summarise the health check in plain words, most
    serious first, each with the fix the user can apply.
 
