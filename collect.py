@@ -141,7 +141,10 @@ def expand(field, top):
 
 
 def run_times(schedule):
-    """Hours of the day (0-24, fractional) a timer fires, plus a short phrase. Interval timers return (None, phrase)."""
+    """Hours of the day (0-24, fractional) a timer fires, plus a short phrase. Interval timers return (None, phrase).
+    A non-systemd string (e.g. a raw cron line) is never a valid OnCalendar, so it is reported as unknown, not parsed."""
+    if not re.search(r"On\w*=", schedule):
+        return [], "（不明）"
     times = []
     for hh, mm in re.findall(r"OnCalendar=\S+ ([\d*,./]+):([\d*,./]+):\S+", schedule):
         try:
@@ -161,6 +164,12 @@ def run_times(schedule):
     if len(times) > 12:
         return times, f"1日 {len(times)} 回"
     return times, " · ".join(f"{int(h)}:{round(h % 1 * 60):02d}" for h in times)
+
+
+def timer_phrase(schedule):
+    """A short 'when' phrase for a timer schedule, guaranteed a non-empty string (never None) for the UI."""
+    phrase = run_times(schedule)[1]
+    return phrase or "（不明）"
 
 
 def cron_schedule(line):
@@ -221,14 +230,50 @@ def hour(t):
         return None
 
 
+def is_event(t):
+    """True when a clock unit is also started by outside events (webhooks): it belongs in the ⚡ side of the page."""
+    return t["unit"].removesuffix(".service") in event_units()
+
+
+def job_names(d):
+    """Jobs this machine's tables show: its timer units plus its cron scripts."""
+    names = [t["unit"].removesuffix(".service") for t in d.get("timers", [])]
+    for line in d.get("cron", []):
+        sched, cmd = cron_schedule(line)
+        if sched is not None:
+            names.append(cron_name(cmd))
+    return names
+
+
+def job_counts(d):
+    """How many jobs this machine's side tables show, counted the way out_timers() lists them."""
+    units = event_units()
+    names = job_names(d)
+    return sum(1 for n in names if n not in units), sum(1 for n in names if n in units)
+
+
+def job_split(data):
+    """How many jobs the whole page lists on each side."""
+    counts = [job_counts(d) for d in data.values()]
+    return sum(c[0] for c in counts), sum(c[1] for c in counts)
+
+
 def overview(data):
-    """Tiles, a who-serves-whom diagram and a 24h chart of when the timers last ran."""
-    ok = sum(t["result"] == "success" for d in data.values() for t in d.get("timers", []))
-    bad = sum(t["result"] != "success" for d in data.values() for t in d.get("timers", []))
+    """Tiles, a who-serves-whom diagram and a 24h chart of when the clock-driven timers last ran."""
+    timers = [t for d in data.values() for t in d.get("timers", [])]
+    per = [t for t in timers if not is_event(t)]
+    ev = [t for t in timers if is_event(t)]
+    per_n, ev_n = job_split(data)
+    ok = sum(t["result"] == "success" for t in per)
+    bad = sum(t["result"] != "success" for t in per)
+    ev_bad = sum(t["result"] != "success" for t in ev)
     llms = sum(len(d.get("llm_servers", [])) for d in data.values())
     svcs = sum(len(d.get("services", [])) for d in data.values())
     tiles = "".join(f'<a class=tile href="#{v}"><div class=ico>{i}</div><div class=num style="color:{c}">{n}</div>{esc(l)}</a>' for i, n, l, c, v in
-                    [("🧠", llms, "LLM サーバー", "var(--fg)", "machines"), ("✅", ok, "定期 成功", "var(--ok)", "jobs"),
+                    [("🧠", llms, "LLM サーバー", "var(--fg)", "machines"),
+                     ("🕒", per_n, "定期の仕事", "var(--per)", "jobs"),
+                     ("⚡", ev_n, f"イベントの仕事{' · 失敗 ' + str(ev_bad) if ev_bad else ''}", "var(--ev)", "jobs"),
+                     ("✅", ok, "定期 成功", "var(--ok)", "jobs"),
                      ("❌" if bad else "✅", bad, "定期 失敗", "var(--bad)" if bad else "var(--ok)", "jobs"),
                      ("⚙️", svcs, "常駐サービス", "var(--fg)", "machines")])
     # diagram: hub on the left, machines in the middle, their models on the right
@@ -238,10 +283,11 @@ def overview(data):
     for h in hosts:
         c, models = COLORS.get(h, "#888"), data[h]["llm_servers"] or [{"port": "", "models": ["（なし）"]}]
         my = y + 46 * len(models) / 2 - 20
-        n = len(data[h]["timers"])
+        n, k = job_counts(data[h])
+        counts = f'定期 {n} 件' + (f' · <tspan class=ev>⚡ {k}</tspan>' if k else "")
         rows.append(f'<path d="M190 {hub_y+20} C260 {hub_y+20},250 {my+20},320 {my+20}" stroke="{c}" fill="none" stroke-width="2"/>'
                     f'<rect x="320" y="{my}" width="170" height="40" rx="8" fill="{c}"/>'
-                    f'<text x="405" y="{my+18}" class="w">{esc(short(hostname_of(h, data)))}<title>{esc(hostname_of(h, data))}</title></text><text x="405" y="{my+33}" class="ws">{esc(h)} · 定期 {n} 件</text>')
+                    f'<text x="405" y="{my+18}" class="w">{esc(short(hostname_of(h, data)))}<title>{esc(hostname_of(h, data))}</title></text><text x="405" y="{my+33}" class="ws">{esc(h)} · {counts}</text>')
         for s in models:
             label = esc(s["models"][0][:28]) + (f" ほか{len(s['models'])-1}" if len(s["models"]) > 1 else "")
             rows.append(f'<path d="M490 {my+20} C540 {my+20},530 {y+18},570 {y+18}" stroke="{c}" fill="none" stroke-opacity=".5"/>'
@@ -260,21 +306,28 @@ def overview(data):
         labels.append(f'<text x="80" y="{cy+4}" class="t" text-anchor="end">{esc(short(hostname_of(h, data), 14))}</text>'
                       f'<line x1="90" x2="890" y1="{cy}" y2="{cy}" stroke="var(--line)"/>')
         for t in data[h]["timers"]:
+            if is_event(t):
+                continue          # event-driven jobs are drawn on the ⚡ side, not on the clock chart
             hr = hour(t)
             if hr is None:
                 continue
-            fill = COLORS.get(h) if t["result"] == "success" else "var(--bad)"
+            fill = COLORS.get(h, "#888") if t["result"] == "success" else "var(--bad)"
             dots.append(f'<circle cx="{90 + hr / 24 * 800:.0f}" cy="{cy}" r="6" fill="{fill}">'
                         f'<title>{esc(t["unit"].removesuffix(".service"))} {esc(t["last"])} {esc(t["result"])}</title></circle>')
     ticks = "".join(f'<text x="{90 + k / 24 * 800:.0f}" y="{30 + len(hosts) * lane}" class="t">{k}時</text>' for k in range(0, 25, 3))
     chart = f'<svg viewBox="0 0 920 {40 + len(hosts) * lane}" class=diag>{"".join(labels)}{"".join(dots)}{ticks}</svg>'
     evs = events_section(data)
     home = f'<div class=tiles>{tiles}</div><section><h2>どれが何を受け持つか</h2>{diagram}</section>'
-    jobs = f'<section class=periodic><h2>🕒 定期の仕事が最後に動いた時刻 <span class=mute>赤は失敗・点にカーソルで名前</span></h2>{chart}</section>'
+    jobs = f'<section class=periodic><h2>🕒 定期の仕事が最後に動いた時刻 <span class=mute>時計が動かす分だけ・青い枠・赤は失敗・点にカーソルで名前</span></h2>{chart}</section>'
+    if ev_bad:
+        fails = "".join(f'<div class=alert>⚡ <b>{esc(hostname_of(h, data))}</b> {esc(t["unit"].removesuffix(".service"))} '
+                        f'<span class=bad>{esc(t["result"])}</span> <span class=mute>{esc(t["last"])}</span></div>'
+                        for h, d in data.items() for t in d.get("timers", []) if is_event(t) and t["result"] != "success")
+        jobs += f'<section class=event><h2>⚡ イベントの仕事で失敗した分 <span class=mute>外のできごとに反応して失敗した分・定期の表には出さない</span></h2>{fails}</section>'
     return home, jobs, evs
 
 
-VIEWS = [("home", "🏠", "概要"), ("org", "🏢", "組織"), ("jobs", "🕒", "定期"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
+VIEWS = [("home", "🏠", "概要"), ("org", "🏢", "組織"), ("jobs", "🕒", "仕事"), ("events", "⚡", "イベント"), ("reports", "🛡", "報告"),
          ("machines", "🖥", "マシン"), ("assets", "🧰", "資産"), ("roadmap", "🗺", "予定"), ("prices", "💴", "価格"), ("net", "🌐", "ネット"), ("health", "🩺", "手綱"), ("score", "📊", "成績"), ("arch", "🧬", "アーキ"), ("chat", "💬", "窓口")]
 
 
@@ -303,7 +356,8 @@ table{{border-collapse:collapse;width:100%}}td,th{{border-top:1px solid var(--li
 .diag{{width:100%;height:auto}}.diag text{{font-size:12px;text-anchor:middle}}.diag .w{{fill:#fff;font-weight:700}}.diag .ws{{fill:#fff;font-size:10px}}.diag .t{{fill:var(--fg)}}.diag .l{{text-anchor:start}}
 details.host>summary{{cursor:pointer;list-style:none;font-size:16px;font-weight:600;padding:10px 0}}details.host>summary::-webkit-details-marker{{display:none}}
 .alert{{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:10px;background:var(--evbg);margin:6px 0}}
-a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg);border-radius:8px}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}.evchip{{font-size:11px;border:1px solid var(--ev);color:var(--ev);border-radius:999px;padding:0 7px}}@keyframes fl{{from{{background:#f5c54266}}to{{background:transparent}}}}tr.flash td{{animation:fl 2.5s}}.chip{{display:inline-block;font-size:12px;border:1px solid var(--per);border-radius:999px;padding:0 8px;margin:2px;text-decoration:none}}.chip.ev{{border-color:var(--ev);color:var(--ev)}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}
+a{{color:inherit}}section.reports{{border-left:6px solid var(--bad)}}.rep{{padding:6px 10px;margin:8px 0;background:var(--evbg);border-radius:8px}}section.periodic{{border-left:6px solid var(--per)}}section.event{{border-left:6px solid var(--ev);background:var(--evbg)}}@keyframes fl{{from{{background:#f5c54266}}to{{background:transparent}}}}tr.flash td{{animation:fl 2.5s}}.chip{{display:inline-block;font-size:12px;border:1px solid var(--per);border-radius:999px;padding:0 8px;margin:2px;text-decoration:none}}.chip.ev{{border-color:var(--ev);color:var(--ev)}}.mute{{color:var(--mute);font-size:12px;font-weight:normal}}.ok{{color:var(--ok)}}.bad{{color:var(--bad);font-weight:600}}
+.blk{{border-radius:10px;padding:2px 12px 8px;margin:10px 0}}.blk.per{{border-left:5px solid var(--per)}}.blk.per>h3{{color:var(--per)}}.blk.ev{{border-left:5px solid var(--ev);background:var(--evbg)}}.blk.ev>h3{{color:var(--ev)}}.diag .ev{{fill:#ffe08a;font-weight:700}}.tag{{font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;border:1px solid currentColor}}.tag.per{{color:var(--per)}}.tag.ev{{color:var(--ev)}}
 .view{{display:none}}.view.on{{display:block}}</style>
 <nav class=rail>{rail}</nav><main><header><h1>ローカル AI 運用</h1><span class=mute>更新 {time.strftime('%m/%d %H:%M')} · 10 分ごと</span></header>
 {body}</main>
@@ -340,8 +394,8 @@ def render_network(data, m):
         boxes[h] = (y, hgt)
         lines = "".join(f'<text x="{x_host + 12}" y="{y + 42 + 16 * i}" class="t l">{esc(a["iface"])}  {esc(a["addr"])}</text>'
                         for i, a in enumerate(addrs))
-        rows.append(f'<rect x="{x_host}" y="{y}" width="240" height="{hgt}" rx="8" fill="none" stroke="{COLORS.get(h)}" stroke-width="2"/>'
-                    f'<rect x="{x_host}" y="{y}" width="240" height="24" rx="8" fill="{COLORS.get(h)}"/>'
+        rows.append(f'<rect x="{x_host}" y="{y}" width="240" height="{hgt}" rx="8" fill="none" stroke="{COLORS.get(h, "#888")}" stroke-width="2"/>'
+                    f'<rect x="{x_host}" y="{y}" width="240" height="24" rx="8" fill="{COLORS.get(h, "#888")}"/>'
                     f'<text x="{x_host + 120}" y="{y + 16}" class="w">{esc(short(hostname_of(h, data), 30))}</text>{lines}')
         counts = {}
         for p in net.get("listen", []):
@@ -367,7 +421,7 @@ def render_network(data, m):
         tl = tun_by.get(h, [])
         dash = "" if tl else 'stroke-dasharray="5,4"'
         edges.append(f'<path d="M{x_hub + 200} {hub_y + 30} C{x_hub + 290} {hub_y + 30},{x_host - 90} {cy},{x_host} {cy}" fill="none" '
-                     f'stroke="{COLORS.get(h)}" stroke-width="{3 if tl else 1.5}" {dash}/>')
+                     f'stroke="{COLORS.get(h, "#888")}" stroke-width="{3 if tl else 1.5}" {dash}/>')
         labels = ["ssh"] + [f"localhost:{t['local']} → :{t['remote']}" for t in tl]
         for i, lab in enumerate(labels):
             edges.append(f'<text x="{x_host - 10}" y="{cy - 8 - 13 * (len(labels) - 1 - i)}" class="t" '
@@ -381,7 +435,7 @@ def render_network(data, m):
         ls = [p for p in data[h].get("net", {}).get("listen", []) if p["scope"] != "local"]
         tr = "".join(f'<tr><td>{p["port"]}</td><td>{esc(p["process"]) or "<span class=mute>（名前は管理者権限が必要）</span>"}</td>'
                      f'<td style="color:{SCOPE[p["scope"]][1]}">{SCOPE[p["scope"]][0]}</td></tr>' for p in ls)
-        tables.append(f'<section style="border-left:6px solid {COLORS.get(h)}"><h2>{esc(hostname_of(h, data))} <span class=mute>{esc(h)}</span></h2>'
+        tables.append(f'<section style="border-left:6px solid {COLORS.get(h, "#888")}"><h2>{esc(hostname_of(h, data))} <span class=mute>{esc(h)}</span></h2>'
                       f'<p class=mute>ほかの機械から届く待ち受けポート（自分だけのものは省略）</p>'
                       f'<table><tr><th>ポート</th><th>プロセス</th><th>届く範囲</th></tr>{tr}</table></section>')
     legend = " ".join(f'<span style="color:{c}">■</span> {n}' for n, c in SCOPE.values())
@@ -392,6 +446,17 @@ def render_network(data, m):
 
 def event_units():
     return {e.get("unit", "").removesuffix(".service") for e in CFG.get("events", [])}
+
+
+def triggers(unit):
+    """The configured outside events that start this unit (a webhook rule per line)."""
+    return [r for r in CFG.get("events", []) if r.get("unit", "").removesuffix(".service") == unit]
+
+
+def trigger_cell(unit):
+    """Orange chips naming what pulls this job: source + the event it answers (only called for units an event names)."""
+    return "".join(f'<span class="chip ev">⚡ {esc(r.get("source") or "?")} <code>{esc(r.get("match", ""))}</code></span>'
+                   for r in triggers(unit))
 
 
 def events_section(data):
@@ -436,53 +501,82 @@ def reports_section(data):
 
 
 def out_timers(data):
-    """Every clock-driven job on one table, machine shown by its color, failures first."""
-    rows = []
+    """Two tables that never mix: clock-driven jobs (blue 🕒) and jobs an outside event starts (orange ⚡)."""
+    per, ev, ev_units = [], [], event_units()
     for h, d in data.items():
         for t in d.get("timers", []):
             name = t["unit"].removesuffix(".service")
-            ev = ' <span class=evchip>⚡</span>' if name in event_units() else ""
-            rows.append((t["result"] == "success", h, f'<tr data-k="{esc(name)}"><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
-                         f'<td><b>{esc(name)}</b>{ev}<div class=mute>{esc(note(t["unit"]) or t["description"])}</div></td>'
-                         f'<td>{strip(t["schedule"], COLORS.get(h))}</td>'
-                         f'<td class={"ok" if t["result"] == "success" else "bad"}>{"✅" if t["result"] == "success" else "❌ " + esc(t["result"])}</td></tr>'))
+            who = f'<td><span style="color:{COLORS.get(h, "#888")}">●</span> {esc(hostname_of(h, data))}</td>'
+            what = f'<td><b>{esc(name)}</b><div class=mute>{esc(note(t["unit"]) or t["description"])}</div></td>'
+            res = (f'<td class={"ok" if t["result"] == "success" else "bad"}>'
+                   f'{"✅" if t["result"] == "success" else "❌ " + esc(t["result"])}</td>')
+            if name in ev_units:
+                phrase = timer_phrase(t["schedule"])
+                ev.append((t["result"] == "success", h, f'<tr data-k="{esc(name)}">{who}{what}<td>{trigger_cell(name)}'
+                                                        f'<div class=mute>タイマーでも: {esc(phrase)}</div></td>{res}</tr>'))
+            else:
+                per.append((t["result"] == "success", h, f'<tr data-k="{esc(name)}">{who}{what}'
+                                                        f'<td>{strip(t["schedule"], COLORS.get(h, "#888"))}</td>{res}</tr>'))
         for line in d.get("cron", []):
             sched, cmd = cron_schedule(line)
             if sched is None:
                 continue
             name = cron_name(cmd)
-            rows.append((True, h, f'<tr data-k="{esc(name)}"><td><span style="color:{COLORS.get(h)}">●</span> {esc(hostname_of(h, data))}</td>'
-                         f'<td><b>{esc(name)}</b> <span class=mute>cron</span><div class=mute>{esc(NOTES.get(name, "") or cmd[:90])}</div></td>'
-                         f'<td>{strip(sched, COLORS.get(h)) if sched.startswith("OnCalendar") else esc(sched)}</td>'
-                         f'<td class=mute title="cron は結果を記録しない">―</td></tr>'))
-    rows.sort(key=lambda r: (r[0], r[1]))
-    yield ('<section class=periodic><h2>🕒 すべての定期の仕事 <span class=mute>失敗が上・帯は24時間、赤線は今</span></h2>'
-           '<table><tr><th>マシン</th><th>仕事</th><th>いつ</th><th>結果</th></tr>' + "".join(r[2] for r in rows) + '</table></section>')
+            on_event = name in ev_units
+            who = f'<td><span style="color:{COLORS.get(h, "#888")}">●</span> {esc(hostname_of(h, data))}</td>'
+            when = (trigger_cell(name) if on_event
+                    else strip(sched, COLORS.get(h, "#888")) if sched.startswith("OnCalendar") else esc(sched))
+            row = (f'<tr data-k="{esc(name)}">{who}'
+                   f'<td><b>{esc(name)}</b> <span class=mute>cron</span><div class=mute>{esc(NOTES.get(name, "") or cmd[:90])}</div></td>'
+                   f'<td>{when}</td><td class=mute title="cron は結果を記録しない">―</td></tr>')
+            (ev if on_event else per).append((True, h, row))
+    per.sort(key=lambda r: (r[0], r[1]))
+    ev.sort(key=lambda r: (r[0], r[1]))
+    yield ('<section class=periodic><h2>🕒 時計が動かす仕事 <span class=mute>失敗が上・帯は24時間、赤線は今・青い枠</span></h2>'
+           '<table><tr><th>マシン</th><th>仕事</th><th>いつ</th><th>結果</th></tr>'
+           + ("".join(r[2] for r in per) or '<tr><td colspan=4 class=mute>なし</td></tr>') + '</table></section>')
+    if ev:
+        yield ('<section class=event><h2>⚡ 外のできごとが動かす仕事 <span class=mute>Webhook など・定期の表には入れない・橙色の枠</span></h2>'
+               '<table><tr><th>マシン</th><th>仕事</th><th>引き金</th><th>結果</th></tr>' + "".join(r[2] for r in ev) + '</table></section>')
+    else:
+        yield '<section class=event><h2>⚡ 外のできごとが動かす仕事</h2><p class=mute>hosts.json の "events" に引き金を書くと、ここに分かれて出ます</p></section>'
 
 
 def render(data, m):
-    out = []
+    out, ev_units = [], event_units()
+
+    def cron_item(c):
+        sched, cmd = cron_schedule(c)
+        mark = '<span class="tag ev">⚡</span> ' if sched is not None and cron_name(cmd) in ev_units else ""
+        return f"<li>{mark}<code>{esc(c[:140])}</code></li>"
+
     for host, d in data.items():
         if "error" in d:
-            out.append(f'<section style="border-left:6px solid {COLORS.get(host)}"><h2>{esc(host)}</h2><p class="bad">届かない: {esc(d["error"])}</p></section>')
+            out.append(f'<section style="border-left:6px solid {COLORS.get(host, "#888")}"><h2>{esc(host)}</h2><p class="bad">届かない: {esc(d["error"])}</p></section>')
             continue
         p2m = {s["port"]: ", ".join(s["models"]) for s in d["llm_servers"]}
         llms = "".join(f"<li><b>:{s['port']}</b> {esc(', '.join(s['models']))} <span class=mute>({esc(s['process'])})</span></li>"
                        for s in d["llm_servers"]) or "<li class=mute>なし</li>"
-        rows = "".join(
-            f"<tr><td><b>{esc(t['unit'].removesuffix('.service'))}</b>{' <span class=evchip>⚡ イベントでも起動</span>' if t['unit'].removesuffix('.service') in event_units() else ''}<div class=mute>{esc(note(t['unit']) or t['description'])}</div></td>"
-            f"<td>{strip(t['schedule'], COLORS.get(host))}</td><td>{esc(t['last'])}</td>"
-            f"<td class={'ok' if t['result'] == 'success' else 'bad'}>{esc(t['result'])}</td>"
-            f"<td>{llm_cell(t['llm'], p2m)}</td></tr>" for t in d["timers"])
+        def timer_row(t, by_event=False):
+            name = t["unit"].removesuffix(".service")
+            when = (trigger_cell(name) + f'<div class=mute>タイマーでも: {esc(timer_phrase(t["schedule"]))}</div>') if by_event \
+                else strip(t["schedule"], COLORS.get(host, "#888"))
+            return (f"<tr><td><b>{esc(name)}</b><div class=mute>{esc(note(t['unit']) or t['description'])}</div></td>"
+                    f"<td>{when}</td><td>{esc(t['last'])}</td>"
+                    f"<td class={'ok' if t['result'] == 'success' else 'bad'}>{esc(t['result'])}</td>"
+                    f"<td>{llm_cell(t['llm'], p2m)}</td></tr>")
+        rows = "".join(timer_row(t) for t in d["timers"] if not is_event(t))
+        ev_rows = "".join(timer_row(t, True) for t in d["timers"] if is_event(t))
         svcs = "".join(
             f"<tr><td><b>{esc(s['unit'].removesuffix('.service'))}</b> <span class=mute>{s['scope']}</span>"
             f"<div class=mute>{esc(note(s['unit']) or s['description'])}</div></td><td>{llm_cell(s['llm'], p2m)}</td></tr>"
             for s in d["services"])
-        cron = "".join(f"<li><code>{esc(c[:140])}</code></li>" for c in d["cron"]) or "<li class=mute>なし</li>"
-        out.append(f"""<section style="border-left:6px solid {COLORS.get(host)}"><h2>{esc(d['host'])} <span class=mute>{esc(host)}</span></h2>
+        cron = "".join(cron_item(c) for c in d["cron"]) or "<li class=mute>なし</li>"
+        out.append(f"""<section style="border-left:6px solid {COLORS.get(host, "#888")}"><h2>{esc(d['host'])} <span class=mute>{esc(host)}</span></h2>
 <p class=mute>{esc(d['gpu'])} · RAM {esc(d['mem'])} · {esc(d['uptime'])}</p>
 <h3>動いている LLM</h3><ul>{llms}</ul>
-<h3>🕒 定期の仕事（タイマー）</h3><table><tr><th>仕事</th><th>いつ <span class=mute>0 · 6 · 12 · 18 · 24時、赤線は今</span></th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table>
+<div class="blk per"><h3>🕒 定期の仕事（時計が動かす）</h3><table><tr><th>仕事</th><th>いつ <span class=mute>0 · 6 · 12 · 18 · 24時、赤線は今</span></th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{rows or '<tr><td colspan=5 class=mute>なし</td></tr>'}</table></div>
+{f'<div class="blk ev"><h3>⚡ イベントで動く仕事（Webhook など外のできごとが引き金）</h3><table><tr><th>仕事</th><th>引き金</th><th>最後</th><th>結果</th><th>使う LLM</th></tr>{ev_rows}</table></div>' if ev_rows else ''}
 <h3>常駐サービス</h3><table><tr><th>サービス</th><th>使う LLM</th></tr>{svcs}</table>
 <h3>cron</h3><ul>{cron}</ul></section>""")
     uses = "".join(f"<tr><td>{esc(a)}</td><td>{esc(b)}</td></tr>" for a, b in m["uses"])
@@ -491,7 +585,8 @@ def render(data, m):
     out.insert(0, f"""<section style="border-left:6px solid {COLORS[CFG['hub']['name']]}"><h2>{esc(HUB_HOST)} <span class=mute>{esc(CFG['hub']['name'])} · {esc(CFG['hub'].get('subtitle', ''))}</span></h2><table><tr><th>何が</th><th>どの LLM を使う</th></tr>{uses}</table>
 {f"<h3>LaunchAgent（トンネル・監視）</h3><ul>{agents}</ul>" if agents else ""}</section>""")
     home, jobs, evs = overview(data)
-    alerts = [f'<div class=alert>❌ <b>{esc(hostname_of(h, data))}</b> {esc(t["unit"].removesuffix(".service"))} <span class=mute>{esc(t["last"])}</span></div>'
+    alerts = [f'<div class=alert>❌ <span class="tag {"ev" if is_event(t) else "per"}">{"⚡ イベント" if is_event(t) else "🕒 定期"}</span> '
+              f'<b>{esc(hostname_of(h, data))}</b> {esc(t["unit"].removesuffix(".service"))} <span class=mute>{esc(t["last"])}</span></div>'
               for h, d in data.items() for t in d.get("timers", []) if t["result"] != "success"]
     alerts += [f'<div class=alert>🚨 <b>{esc(r["title"])}</b> <span class=mute>{esc(r["time"][:16])}</span></div>'
                for d in data.values() for r in (d.get("reports") or []) if r["level"] == "high"][-3:]
