@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Serve the dashboard from an always-on machine and refresh it every few minutes.
 
-    python3 serve.py [--bind 127.0.0.1] [--port 8795] [--every 600]
+    python3.12 serve.py [--bind 127.0.0.1] [--port 8795] [--every 600]
 
 Binds to 127.0.0.1 by default: put it on your tailnet with `tailscale serve` (HTTPS, tailnet only) instead of
 opening a port. Only the two generated pages are served; nothing else in this folder is reachable.
