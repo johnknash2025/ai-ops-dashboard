@@ -67,4 +67,4 @@ can only run the probe: `./install-probe-key.sh <its .pub> <its addresses> <ssh 
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). Versions published before 2026-10-31 remain available under MIT.
