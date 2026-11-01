@@ -1,5 +1,7 @@
 # ai-ops-dashboard
 
+English | [日本語](README.ja.md)
+
 One HTML page that answers "which of my machines runs which model, and which jobs depend on it?"
 for a home lab of local LLM boxes. It reaches each machine over your own ssh, reads a few things,
 and draws a hub-and-machines diagram, a 24-hour chart of when scheduled jobs last ran, and per-machine tables.

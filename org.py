@@ -83,9 +83,11 @@ def workflows(agents, data, events):
                 trig.append(f'<a href="#events/{esc(e.get("key") or e["name"])}" class="chip ev">⚡ {esc(e["name"])}</a>')
         trig += [f'<span class="chip ev">✋ {esc(x)}</span>' for x in a.get("starts", [])]
         flow = " → ".join(esc(x) for x in a.get("flow", [])) or '<span class=mute>（手順はまだ書かれていない）</span>'
+        out = a.get("output")
+        outdiv = f'<div class=mute>→ {esc(out)}</div>' if out else ""
         rows.append(f'<tr><td><b>{esc(a["name"])}</b><div class=mute>{esc(a.get("model", ""))}</div></td>'
                     f'<td>{" ".join(trig) or "<span class=mute>なし</span>"}</td><td>{flow}'
-                    f'{f"<div class=mute>→ {esc(a.get('output'))}</div>" if a.get("output") else ""}</td>'
+                    f'{outdiv}</td>'
                     f'<td class=mute>{esc(", ".join(a.get("can", [])))}</td></tr>')
     return ('<section><h2>🔁 エージェントとワークフロー <span class=mute>🕒 定期 · ⚡ イベント · ✋ 人の合図。押すとその仕事へ</span></h2>'
             '<table><tr><th>エージェント</th><th>何で動く</th><th>手順と出し先</th><th>権限</th></tr>' + "".join(rows) + '</table></section>')
