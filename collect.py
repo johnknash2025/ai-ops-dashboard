@@ -55,7 +55,7 @@ def consented(name, how, yes):
         return True
     print(DISCLOSURE.format(name=name, how=how, out=HERE / "dashboard.html", consent=CONSENT))
     if yes:
-        print("  -> accepted with --yes")
+        print(f"  -> accepted with --yes: reading {name} over {how}")
     elif not sys.stdin.isatty() or input("Allow? [y/N] ").strip().lower() != "y":
         return False
     store[name] = {"sha256": digest, "at": time.strftime("%F %T")}
@@ -532,7 +532,10 @@ def collect(config, yes):
 def main():
     ap = argparse.ArgumentParser(description="Who does what on your local AI machines, as one HTML page.")
     ap.add_argument("--config", type=Path, default=CONF_DIR / "hosts.json")
-    ap.add_argument("--yes", action="store_true", help="accept the read-only probe for every host without asking")
+    ap.add_argument("--yes", action="store_true",
+                    help="accept the read-only probe for every host in hosts.json without asking: "
+                         "only for scripts, and only after checking that this --config file lists exactly "
+                         "the machines you mean (each accepted read is printed as it happens)")
     a = ap.parse_args()
     collect(a.config, a.yes)
     print("wrote", HERE / "dashboard.html")
